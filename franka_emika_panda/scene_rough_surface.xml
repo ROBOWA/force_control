@@ -1,0 +1,12 @@
+<mujoco model="panda_rough_surface_scene">
+  
+  <include file="panda 20250403.xml"/>
+  <include file="rough_surface.xml"/>
+
+  <!--
+  <contact>
+    <pair geom1="stick_collision" geom2="rough_surface"/>
+  </contact>
+  -->
+
+</mujoco>

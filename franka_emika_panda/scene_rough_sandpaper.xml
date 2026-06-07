@@ -1,0 +1,13 @@
+<mujoco model="panda_rough_surface_scene">
+  <option timestep="0.002" solver="Newton" tolerance="1e-4" impratio="10"/>
+
+  <include file="panda_20260405.xml"/>
+  <!-- Sandpaper grit options (uncomment one):
+       sandpaper/sandpaper_p60.xml    – P60  coarsest, bump r=1.5mm
+       sandpaper/sandpaper_p400.xml   – P400         , bump r=0.9mm
+       sandpaper/sandpaper_p600.xml   – P600         , bump r=0.7mm
+       sandpaper/sandpaper_p1000.xml  – P1000        , bump r=0.5mm
+       sandpaper/sandpaper_p2000.xml  – P2000 finest , bump r=0.3mm  -->
+  <include file="sandpaper/sandpaper_p60.xml"/>
+
+</mujoco>

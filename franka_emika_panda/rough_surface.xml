@@ -1,0 +1,18 @@
+<mujocoinclude>
+  
+
+  <worldbody>
+    <body name="rough_surface_body" pos="0.4 0.0 0.0">
+     
+      <geom name="rough_surface"
+            type="box"
+            size="0.20 0.15 0.001"
+            pos="0 0 0.001"
+            friction="0.3 0.005 0.0003"
+            rgba="0.91 0.88 0.82 0.9"
+            contype="1"
+            conaffinity="1"/>
+    </body>
+  </worldbody>
+
+</mujocoinclude>
