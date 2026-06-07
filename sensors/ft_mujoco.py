@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import mujoco
 
-from force_control.core.types import WrenchSample
+from ..core.types import WrenchSample
 
 
 class FTMuJoCo:

@@ -9,7 +9,7 @@ import csv
 import time
 import numpy as np
 
-from force_control.core.types import WrenchSample, TargetSample
+from ..core.types import WrenchSample, TargetSample
 
 
 class FTReplaySource:

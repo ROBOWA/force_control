@@ -18,10 +18,10 @@ import threading
 import time
 import numpy as np
 
-from force_control.core.types import RobotStateLite, TargetSample, WrenchSample
-from force_control.core.controller import ControllerCore
-from force_control.core.state_machine import StateMachine
-from force_control.core.safety import saturate_torque_rate
+from ..core.types import RobotStateLite, TargetSample, WrenchSample
+from ..core.controller import ControllerCore
+from ..core.state_machine import StateMachine
+from ..core.safety import saturate_torque_rate
 
 
 class FrankaBackend:

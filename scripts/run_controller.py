@@ -1,22 +1,18 @@
 """Main entry point for force-control experiments.
 
-Usage examples:
+Run from the repo root (force_control/):
 
     # MuJoCo simulation (Mac)
-    python -m force_control.scripts.run_controller \\
-        --backend sim --config force_control/configs/sim.yaml
+    python -m scripts.run_controller --backend sim --config configs/sim.yaml
 
     # Real robot, dry-run (imports + config check, no motion)
-    python -m force_control.scripts.run_controller \\
-        --backend real --config force_control/configs/real.yaml --dry-run
+    python -m scripts.run_controller --backend real --config configs/real.yaml --dry-run
 
     # Real robot, execute (prompts for confirmation)
-    python -m force_control.scripts.run_controller \\
-        --backend real --config force_control/configs/real.yaml --execute
+    python -m scripts.run_controller --backend real --config configs/real.yaml --execute
 
     # Offline replay from a CSV log
-    python -m force_control.scripts.run_controller \\
-        --backend replay --log data/logs/example.csv
+    python -m scripts.run_controller --backend replay --log data/logs/example.csv
 """
 
 from __future__ import annotations
@@ -32,7 +28,7 @@ def load_config(path: str) -> dict:
 
 def run_sim(config: dict) -> None:
     """Launch the MuJoCo backend (Mac)."""
-    from force_control.backends.mujoco_backend import MuJoCoBackend
+    from backends.mujoco_backend import MuJoCoBackend
     xml = config.get("mjcf", "franka_emika_panda/scene.xml")
     backend = MuJoCoBackend(xml, config)
     backend.load()
@@ -41,7 +37,7 @@ def run_sim(config: dict) -> None:
 
 def run_real(config: dict, dry_run: bool) -> None:
     """Launch the Franka backend (Ubuntu Panda PC)."""
-    from force_control.backends.franka_backend import FrankaBackend
+    from backends.franka_backend import FrankaBackend
     robot_ip = config["robot_ip"]
     backend = FrankaBackend(robot_ip, config)
     backend.connect()

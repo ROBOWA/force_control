@@ -8,7 +8,7 @@ from __future__ import annotations
 import threading
 import numpy as np
 
-from force_control.core.types import WrenchSample
+from ..core.types import WrenchSample
 
 
 class FTRosSource:

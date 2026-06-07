@@ -1,116 +1,141 @@
 """MuJoCo simulation backend — Mac development mode.
 
-Runs the full control loop inside the MuJoCo viewer at the sim timestep.
-No pylibfranka or ROS imports.
+Milestone 1: joint-space IK + min-jerk trajectory + joint PD torque control.
+No Cartesian impedance, no FT sensor, no contact, no ROS.
 """
 
 from __future__ import annotations
+from enum import Enum, auto
 import numpy as np
 import mujoco
 import mujoco.viewer
 
-from force_control.core.types import RobotStateLite, TargetSample, WrenchSample
-from force_control.core.controller import ControllerCore
-from force_control.core.state_machine import StateMachine
-from force_control.sensors.ft_mujoco import FTMuJoCo
+from core.ik import min_jerk, solve_ik_dls
 
 
-# Indices of the 7 Panda actuators in mj_data.ctrl
-_PANDA_CTRL_IDX = slice(0, 7)
+# panda.xml actuators: force = ACTUATOR_GAIN * ctrl
+# To command torque τ: set ctrl = τ / ACTUATOR_GAIN
+ACTUATOR_GAIN = 500.0
 
-# MuJoCo body / site names (must match the MJCF)
-_EE_SITE_NAME = "attachment_site"
+
+class Phase(Enum):
+    SOLVE_IK   = auto()
+    MOVE_JOINT = auto()
+    HOLD_JOINT = auto()
 
 
 class MuJoCoBackend:
-    """Wraps MuJoCo model/data and drives ControllerCore at the sim rate.
+    """Minimal MuJoCo backend: IK → min-jerk move → hold.
 
-    Typical usage::
+    Usage::
 
         backend = MuJoCoBackend("franka_emika_panda/scene.xml", cfg)
-        backend.run()
+        backend.load()
+        backend.run()   # blocks until viewer is closed
     """
 
     def __init__(self, xml_path: str, config: dict):
-        """
-        Args:
-            xml_path: path to the MJCF scene file
-            config:   merged sim config dict (from configs/sim.yaml)
-        """
         self._xml_path = xml_path
         self._cfg = config
         self._model: mujoco.MjModel | None = None
-        self._data: mujoco.MjData | None = None
-        self._controller: ControllerCore | None = None
-        self._state_machine: StateMachine | None = None
-        self._ft_source: FTMuJoCo | None = None
-        self._current_target: TargetSample | None = None
+        self._data:  mujoco.MjData  | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def load(self) -> None:
-        """Load the MJCF and initialise MuJoCo model/data."""
-        # TODO: implement
-        # self._model = mujoco.MjModel.from_xml_path(self._xml_path)
-        # self._data  = mujoco.MjData(self._model)
-        # mujoco.mj_resetDataKeyframe(self._model, self._data, 0)
-        # mujoco.mj_forward(self._model, self._data)
-        raise NotImplementedError
+        """Load MJCF, reset to home keyframe, print diagnostics."""
+        self._model = mujoco.MjModel.from_xml_path(self._xml_path)
+        self._data  = mujoco.MjData(self._model)
+        mujoco.mj_resetDataKeyframe(self._model, self._data, 0)
+        mujoco.mj_forward(self._model, self._data)
+
+        cfg_ik    = self._cfg["ik"]
+        site_name = cfg_ik["site_name"]
+        target_pos = np.array(cfg_ik["target_pos"])
+
+        site_id = mujoco.mj_name2id(
+            self._model, mujoco.mjtObj.mjOBJ_SITE, site_name
+        )
+        if site_id < 0:
+            raise ValueError(f"Site '{site_name}' not found in {self._xml_path}")
+
+        print(f"Loaded MJCF: {self._xml_path}")
+        print(f"Using site:  {site_name}")
+        print(f"Initial site position: {self._data.site_xpos[site_id].round(4)}")
+        print(f"Target site position:  {target_pos}")
 
     def run(self) -> None:
-        """Run the passive viewer loop (blocking)."""
-        # TODO: implement
-        # with mujoco.viewer.launch_passive(self._model, self._data) as viewer:
-        #     while viewer.is_running():
-        #         state  = self._read_state()
-        #         wrench = self._ft_source.get_latest()
-        #         target = self._state_machine.update(...)
-        #         tau    = self._controller.step(state, target, wrench, dt)
-        #         self._apply_tau(tau)
-        #         mujoco.mj_step(self._model, self._data)
-        #         viewer.sync()
-        raise NotImplementedError
+        """Open passive viewer and run the control loop (blocking)."""
+        model = self._model
+        data  = self._data
+        cfg_ik = self._cfg["ik"]
+        cfg_pd = self._cfg["joint_pd"]
 
-    # ------------------------------------------------------------------
-    # State reading
-    # ------------------------------------------------------------------
+        site_name  = cfg_ik["site_name"]
+        target_pos = np.array(cfg_ik["target_pos"])
+        move_time  = float(cfg_ik.get("move_time", 5.0))
+        keep_ori   = bool(cfg_ik.get("keep_current_orientation", True))
+        kp = np.array(cfg_pd["kp"], dtype=float)
+        kd = np.array(cfg_pd["kd"], dtype=float)
 
-    def _read_state(self) -> RobotStateLite:
-        """Convert current mj_data into RobotStateLite."""
-        # TODO: implement
-        # q        = self._data.qpos[:7].copy()
-        # dq       = self._data.qvel[:7].copy()
-        # O_T_EE   = self._ee_transform()
-        # J        = self._jacobian()
-        # coriolis = self._data.qfrc_bias[:7].copy()  # gravity+coriolis in sim
-        # t        = self._data.time
-        raise NotImplementedError
+        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
 
-    def _ee_transform(self) -> np.ndarray:
-        """Return 4×4 base→EE homogeneous transform from MuJoCo site."""
-        # TODO: implement via mujoco.mj_forward + site_xpos/site_xmat
-        raise NotImplementedError
+        # ---- Phase SOLVE_IK ------------------------------------------
+        q_init   = data.qpos[:7].copy()
+        target_R = data.site_xmat[site_id].copy().reshape(3, 3) if keep_ori else np.eye(3)
 
-    def _jacobian(self) -> np.ndarray:
-        """Return 6×7 geometric Jacobian for the EE site."""
-        # TODO: implement via mujoco.mj_jacSite
-        raise NotImplementedError
+        q_ik, n_iter, err, converged = solve_ik_dls(
+            model, data, site_id, q_init, target_pos, target_R
+        )
+        print(f"IK converged: {converged}  (iter={n_iter}, err={err:.5f})")
+        print(f"q_start: {q_init.round(4)}")
+        print(f"q_goal:  {q_ik.round(4)}")
 
-    # ------------------------------------------------------------------
-    # Command output
-    # ------------------------------------------------------------------
+        # IK perturbs qpos during FK calls — restore to keyframe pose
+        data.qpos[:7] = q_init
+        data.qvel[:7] = 0.0
+        mujoco.mj_forward(model, data)
 
-    def _apply_tau(self, tau: np.ndarray) -> None:
-        """Write joint torques to mj_data.ctrl."""
-        self._data.ctrl[_PANDA_CTRL_IDX] = tau
+        # ---- Phase MOVE_JOINT / HOLD_JOINT ---------------------------
+        q_start = q_init.copy()
+        q_goal  = q_ik.copy()
+        phase   = Phase.MOVE_JOINT
+        move_start_time = data.time
+        hold_printed = False
 
-    # ------------------------------------------------------------------
-    # Target initialisation
-    # ------------------------------------------------------------------
+        print(f"Moving for {move_time:.1f} s ...")
 
-    def _make_initial_target(self) -> TargetSample:
-        """Build the initial TargetSample from the home keyframe pose."""
-        # TODO: implement — read current EE pose, zero velocity/force targets
-        raise NotImplementedError
+        with mujoco.viewer.launch_passive(model, data) as viewer:
+            while viewer.is_running():
+                t_elapsed = data.time - move_start_time
+
+                # ---- Desired trajectory ----------------------------
+                if phase == Phase.MOVE_JOINT:
+                    if t_elapsed < move_time:
+                        s, ds = min_jerk(t_elapsed, move_time)
+                        q_des  = q_start + s  * (q_goal - q_start)
+                        dq_des = ds * (q_goal - q_start)
+                    else:
+                        phase  = Phase.HOLD_JOINT
+                        q_des  = q_goal
+                        dq_des = np.zeros(7)
+
+                if phase == Phase.HOLD_JOINT:
+                    if not hold_printed:
+                        print("Reached HOLD_JOINT")
+                        hold_printed = True
+                    q_des  = q_goal
+                    dq_des = np.zeros(7)
+
+                # ---- Joint-space PD + gravity compensation ----------
+                q  = data.qpos[:7].copy()
+                dq = data.qvel[:7].copy()
+                tau = kp * (q_des - q) + kd * (dq_des - dq) + data.qfrc_bias[:7]
+
+                # Map torque to ctrl (see ACTUATOR_GAIN comment at top)
+                data.ctrl[:7] = tau / ACTUATOR_GAIN
+
+                mujoco.mj_step(model, data)
+                viewer.sync()
