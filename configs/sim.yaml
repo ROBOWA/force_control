@@ -1,0 +1,46 @@
+# MuJoCo simulation configuration (Mac development mode)
+
+mjcf: franka_emika_panda/scene.xml
+
+# ControllerCore
+controller:
+  max_torque_rate: 1.0          # [Nm] per 1 ms tick
+  null_stiffness: 10.0          # [Nm/rad]
+  null_q_d: [0.0, -0.3, 0.0, -1.8, 0.0, 1.5, 0.0]  # home config
+
+  # Cartesian stiffness/damping (6-DOF: [x, y, z, rx, ry, rz])
+  K: [500.0, 500.0, 500.0, 30.0, 30.0, 30.0]
+  D: [50.0,  50.0,  50.0,  5.0,  5.0,  5.0]
+
+  # Force PI (active only in CONTACT / SETTLE / SLIDE phases)
+  force_pi_kp: 0.001
+  force_pi_ki: 0.0001
+  force_pi_max: 5.0             # [N] anti-windup clamp
+
+  # Staleness thresholds
+  target_stale_ms: 50.0
+  ft_stale_ms: 20.0
+
+# StateMachine
+state_machine:
+  contact_fz_threshold: 2.0    # [N] Fz magnitude to detect contact
+  approach_speed: 0.005         # [m/s]
+  settle_duration: 0.5          # [s]
+  slide_speed: 0.003            # [m/s]
+  slide_distance: 0.05          # [m]
+  lift_height: 0.05             # [m]
+  lift_speed: 0.01              # [m/s]
+  F_normal_desired: 3.0         # [N] desired normal force during sliding
+  target_z_contact: 0.01        # [m] approximate surface z in base frame
+
+# FT source
+ft:
+  strategy: sensor              # "sensor" or "contact"
+  sensor_name: ft_sensor        # name of the MuJoCo sensor element
+  contact_body: hand
+
+# Logging
+logging:
+  enabled: true
+  output_dir: data/logs
+  prefix: sim

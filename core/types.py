@@ -1,0 +1,40 @@
+"""Shared data types passed between backends and the controller core.
+
+No MuJoCo, pylibfranka, or ROS imports allowed here.
+"""
+
+from dataclasses import dataclass
+import numpy as np
+
+
+@dataclass(frozen=True)
+class RobotStateLite:
+    """Minimal robot state consumed by ControllerCore."""
+    t: float
+    q: np.ndarray       # shape (7,) joint positions [rad]
+    dq: np.ndarray      # shape (7,) joint velocities [rad/s]
+    O_T_EE: np.ndarray  # shape (4,4) base→EE homogeneous transform
+    J: np.ndarray       # shape (6,7) geometric Jacobian
+    coriolis: np.ndarray  # shape (7,) coriolis + gravity torques [Nm]
+
+
+@dataclass(frozen=True)
+class WrenchSample:
+    """One FT sensor sample (real or simulated)."""
+    t: float
+    wrench: np.ndarray  # shape (6,) [Fx,Fy,Fz,Tx,Ty,Tz] in control frame [N, Nm]
+    seq: int
+
+
+@dataclass(frozen=True)
+class TargetSample:
+    """One target sample produced by the outer (400 Hz) loop."""
+    t: float
+    x_d: np.ndarray    # shape (3,) desired EE position [m]
+    dx_d: np.ndarray   # shape (3,) desired EE linear velocity [m/s]
+    R_d: np.ndarray    # shape (3,3) desired EE orientation
+    w_d: np.ndarray    # shape (3,) desired EE angular velocity [rad/s]
+    F_ff: np.ndarray   # shape (6,) feedforward wrench [N, Nm]
+    K: np.ndarray      # shape (6,) Cartesian stiffness diagonal
+    D: np.ndarray      # shape (6,) Cartesian damping diagonal
+    seq: int

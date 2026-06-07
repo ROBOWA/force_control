@@ -1,0 +1,52 @@
+# Real Franka Panda configuration (Ubuntu Panda PC)
+
+robot_ip: "172.16.0.2"
+
+# ControllerCore
+controller:
+  max_torque_rate: 1.0          # [Nm] per 1 ms tick — conservative for first tests
+  null_stiffness: 10.0          # [Nm/rad]
+  null_q_d: [0.0, -0.3, 0.0, -1.8, 0.0, 1.5, 0.0]
+
+  # Cartesian stiffness/damping — start low for hardware validation
+  K: [200.0, 200.0, 200.0, 10.0, 10.0, 10.0]
+  D: [30.0,  30.0,  30.0,  3.0,  3.0,  3.0]
+
+  # Force PI
+  force_pi_kp: 0.0005
+  force_pi_ki: 0.00005
+  force_pi_max: 3.0             # [N]
+
+  # Staleness thresholds
+  target_stale_ms: 10.0         # tighter on real hardware
+  ft_stale_ms: 15.0
+
+# StateMachine
+state_machine:
+  contact_fz_threshold: 1.0    # [N] — low first-test threshold
+  approach_speed: 0.002         # [m/s] — slow approach for safety
+  settle_duration: 1.0          # [s]
+  slide_speed: 0.002            # [m/s]
+  slide_distance: 0.03          # [m]
+  lift_height: 0.05             # [m]
+  lift_speed: 0.005             # [m/s]
+  F_normal_desired: 2.0         # [N]
+  target_z_contact: 0.02        # [m] — update after table calibration
+
+# FT sensor (ROS topic from FT PC)
+ft:
+  topic: /ft_sensor/wrench
+  rate_hz: 400
+
+# Safety
+safety:
+  max_cartesian_speed: 0.005    # [m/s]
+  max_z_descent: 0.05           # [m] below approach start
+  max_contact_force: 10.0       # [N] emergency stop threshold
+  max_torque: [87, 87, 87, 87, 12, 12, 12]  # [Nm] Panda limits
+
+# Logging
+logging:
+  enabled: true
+  output_dir: data/logs
+  prefix: real
