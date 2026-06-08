@@ -1,0 +1,437 @@
+<mujoco model="panda">
+  <!--
+    panda_impedance.xml
+    Derived from: ../../simulation/tactile_sensor/mjcf_check/franka_emika_panda/panda_20260405.xml
+
+    Actuator change: position-scaled -> direct torque control
+      Original:  gainprm="500"  ctrlrange="-2.8973 2.8973"  (ctrl in rad-scale, force = 500*ctrl)
+      This file: gainprm="1"    ctrlrange="-87 87"           (ctrl in Nm directly)
+
+    Arm joints 1-7: ctrl [Nm] -> torque [Nm] with gain=1, no position/velocity feedback
+    Gripper (actuator8): unchanged, remains position-controlled (PD on tendon "split")
+
+    Mesh assets: resolved via relative path to original asset directory.
+    See README.md in this directory for path setup details.
+  -->
+  <compiler angle="radian"
+            meshdir="/home/yifan_wu/franka_interact/impedance_control/assets"
+            autolimits="true"/>
+
+  <option integrator="implicitfast"/>
+
+  <default>
+    <default class="panda">
+      <material specular="0.5" shininess="0.25"/>
+      <joint armature="0.1" damping="1" axis="0 0 1" range="-2.8973 2.8973"/>
+      <!-- ctrlrange now covers torque range [Nm] instead of joint angle range [rad] -->
+      <general dyntype="none" biastype="affine" ctrlrange="-87 87" forcerange="-87 87"/>
+      <default class="finger">
+        <joint axis="0 1 0" type="slide" range="0 0.04"/>
+      </default>
+
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom type="mesh" group="3"/>
+        <default class="fingertip_pad_collision_1">
+          <geom type="box" size="0.0146 0.0069 0.0137" pos="0 0.0103 0.1080"/>
+        </default>
+        <default class="fingertip_pad_collision_2">
+          <geom type="box" size="0.0051 0.0034 0.0051" pos="0.0094 0.0034 0.1200"/>
+        </default>
+        <default class="fingertip_pad_collision_3">
+          <geom type="box" size="0.0051 0.0034 0.0051" pos="-0.0094 0.0034 0.1200"/>
+        </default>
+        <default class="fingertip_pad_collision_4">
+          <geom type="box" size="0.0051 0.0034 0.0051" pos="0.0094 0.0034 0.0994"/>
+        </default>
+        <default class="fingertip_pad_collision_5">
+          <geom type="box" size="0.0051 0.0034 0.0051" pos="-0.0094 0.0034 0.0994"/>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".1 .2 .3" rgb2=".2 .3 .4" width="300" height="300" mark="edge" markrgb=".2 .3 .5"/>
+
+    <texture name="skybox" type="skybox" builtin="gradient" rgb1=".3 .5 .7" rgb2=".1 .2 .3" width="512" height="512"/>
+
+    <texture name="checkerboard" type="2d" builtin="checker" rgb1=".2 .3 .5" rgb2=".1 .2 .4" width="512" height="512" mark="edge" markrgb=".3 .4 .6"/>
+
+    <material name="floor_mat" texture="checkerboard" texrepeat="1 1" texuniform="true" specular=".3" shininess=".5"/>
+
+
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
+    <material class="panda" name="white" rgba="1 1 1 1"/>
+    <material class="panda" name="off_white" rgba="0.901961 0.921569 0.929412 1"/>
+    <material class="panda" name="black" rgba="0.25 0.25 0.25 1"/>
+    <material class="panda" name="green" rgba="0 1 0 1"/>
+    <material class="panda" name="light_blue" rgba="0.039216 0.541176 0.780392 1"/>
+    <material name="sensor_orange" rgba="1.0 0.45 0.0 1"/>
+
+    <!-- Collision meshes -->
+    <mesh name="link0_c" file="link0.stl"/>
+    <mesh name="link1_c" file="link1.stl"/>
+    <mesh name="link2_c" file="link2.stl"/>
+    <mesh name="link3_c" file="link3.stl"/>
+    <mesh name="link4_c" file="link4.stl"/>
+    <mesh name="link5_c0" file="link5_collision_0.obj"/>
+    <mesh name="link5_c1" file="link5_collision_1.obj"/>
+    <mesh name="link5_c2" file="link5_collision_2.obj"/>
+    <mesh name="link6_c" file="link6.stl"/>
+    <mesh name="link7_c" file="link7.stl"/>
+    <mesh name="hand_c" file="hand.stl"/>
+
+    <!-- Visual meshes -->
+    <mesh file="link0_0.obj"/>
+    <mesh file="link0_1.obj"/>
+    <mesh file="link0_2.obj"/>
+    <mesh file="link0_3.obj"/>
+    <mesh file="link0_4.obj"/>
+    <mesh file="link0_5.obj"/>
+    <mesh file="link0_7.obj"/>
+    <mesh file="link0_8.obj"/>
+    <mesh file="link0_9.obj"/>
+    <mesh file="link0_10.obj"/>
+    <mesh file="link0_11.obj"/>
+    <mesh file="link1.obj"/>
+    <mesh file="link2.obj"/>
+    <mesh file="link3_0.obj"/>
+    <mesh file="link3_1.obj"/>
+    <mesh file="link3_2.obj"/>
+    <mesh file="link3_3.obj"/>
+    <mesh file="link4_0.obj"/>
+    <mesh file="link4_1.obj"/>
+    <mesh file="link4_2.obj"/>
+    <mesh file="link4_3.obj"/>
+    <mesh file="link5_0.obj"/>
+    <mesh file="link5_1.obj"/>
+    <mesh file="link5_2.obj"/>
+    <mesh file="link6_0.obj"/>
+    <mesh file="link6_1.obj"/>
+    <mesh file="link6_2.obj"/>
+    <mesh file="link6_3.obj"/>
+    <mesh file="link6_4.obj"/>
+    <mesh file="link6_5.obj"/>
+    <mesh file="link6_6.obj"/>
+    <mesh file="link6_7.obj"/>
+    <mesh file="link6_8.obj"/>
+    <mesh file="link6_9.obj"/>
+    <mesh file="link6_10.obj"/>
+    <mesh file="link6_11.obj"/>
+    <mesh file="link6_12.obj"/>
+    <mesh file="link6_13.obj"/>
+    <mesh file="link6_14.obj"/>
+    <mesh file="link6_15.obj"/>
+    <mesh file="link6_16.obj"/>
+    <mesh file="link7_0.obj"/>
+    <mesh file="link7_1.obj"/>
+    <mesh file="link7_2.obj"/>
+    <mesh file="link7_3.obj"/>
+    <mesh file="link7_4.obj"/>
+    <mesh file="link7_5.obj"/>
+    <mesh file="link7_6.obj"/>
+    <mesh file="link7_7.obj"/>
+    <mesh file="hand_0.obj"/>
+    <mesh file="hand_1.obj"/>
+    <mesh file="hand_2.obj"/>
+    <mesh file="hand_3.obj"/>
+    <mesh file="hand_4.obj"/>
+    <mesh file="finger_0.obj"/>
+    <mesh name="finger_0_new" file="gripper_new_aligned.obj"/>
+    <mesh name="finger_0_0405" file="finger_0_0405_aligned.obj"/>
+    <mesh file="finger_1.obj"/>
+    <mesh name="sen_a000" file="SEN-A000_aligned.obj"/>
+    <!-- Stick mesh -->
+    <mesh name="stick_mesh" file="stick_aligned.obj"/>
+  </asset>
+
+  <worldbody>
+    <light name="top" pos="0 0 2" mode="trackcom"/>
+    <light directional="true" diffuse=".8 .8 .8" specular=".2 .2 .2" pos="0 0 5" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="5 5 .1" material="floor_mat" pos="0 0 0"/>
+    <!-- Sandpaper P120: body at x=0.4 so geoms cover world x≈[0.2,0.6], y=[-0.15,0.15]
+         Top surface at z=0.002 matches z_pre_contact=0.002 in config/default.yaml -->
+    <body name="sandpaper_p120" pos="0.4 0.0 0.0">
+      <geom name="sandpaper_surface" type="box" size="0.20 0.15 0.001" pos="0 0 0.001"
+            friction="2.6 0.04 0.002" rgba="0.61 0.44 0.24 1" contype="1" conaffinity="1"/>
+    </body>
+    <body name="link0" childclass="panda">
+      <inertial mass="0.629769" pos="-0.041018 -0.00014 0.049974"
+        fullinertia="0.00315 0.00388 0.004285 8.2904e-7 0.00015 8.2299e-6"/>
+      <geom mesh="link0_0" material="off_white" class="visual"/>
+      <geom mesh="link0_1" material="black" class="visual"/>
+      <geom mesh="link0_2" material="off_white" class="visual"/>
+      <geom mesh="link0_3" material="black" class="visual"/>
+      <geom mesh="link0_4" material="off_white" class="visual"/>
+      <geom mesh="link0_5" material="black" class="visual"/>
+      <geom mesh="link0_7" material="white" class="visual"/>
+      <geom mesh="link0_8" material="white" class="visual"/>
+      <geom mesh="link0_9" material="black" class="visual"/>
+      <geom mesh="link0_10" material="off_white" class="visual"/>
+      <geom mesh="link0_11" material="white" class="visual"/>
+      <geom mesh="link0_c" class="collision"/>
+      <body name="link1" pos="0 0 0.333">
+        <inertial mass="4.970684" pos="0.003875 0.002081 -0.04762"
+          fullinertia="0.70337 0.70661 0.0091170 -0.00013900 0.0067720 0.019169"/>
+        <joint name="joint1"/>
+        <geom material="white" mesh="link1" class="visual"/>
+        <geom mesh="link1_c" class="collision"/>
+        <body name="link2" quat="1 -1 0 0">
+          <inertial mass="0.646926" pos="-0.003141 -0.02872 0.003495"
+            fullinertia="0.0079620 2.8110e-2 2.5995e-2 -3.925e-3 1.0254e-2 7.04e-4"/>
+          <joint name="joint2" range="-1.7628 1.7628"/>
+          <geom material="white" mesh="link2" class="visual"/>
+          <geom mesh="link2_c" class="collision"/>
+          <body name="link3" pos="0 -0.316 0" quat="1 1 0 0">
+            <joint name="joint3"/>
+            <inertial mass="3.228604" pos="2.7518e-2 3.9252e-2 -6.6502e-2"
+              fullinertia="3.7242e-2 3.6155e-2 1.083e-2 -4.761e-3 -1.1396e-2 -1.2805e-2"/>
+            <geom mesh="link3_0" material="white" class="visual"/>
+            <geom mesh="link3_1" material="white" class="visual"/>
+            <geom mesh="link3_2" material="white" class="visual"/>
+            <geom mesh="link3_3" material="black" class="visual"/>
+            <geom mesh="link3_c" class="collision"/>
+            <body name="link4" pos="0.0825 0 0" quat="1 1 0 0">
+              <inertial mass="3.587895" pos="-5.317e-2 1.04419e-1 2.7454e-2"
+                fullinertia="2.5853e-2 1.9552e-2 2.8323e-2 7.796e-3 -1.332e-3 8.641e-3"/>
+              <joint name="joint4" range="-3.0718 -0.0698"/>
+              <geom mesh="link4_0" material="white" class="visual"/>
+              <geom mesh="link4_1" material="white" class="visual"/>
+              <geom mesh="link4_2" material="black" class="visual"/>
+              <geom mesh="link4_3" material="white" class="visual"/>
+              <geom mesh="link4_c" class="collision"/>
+              <body name="link5" pos="-0.0825 0.384 0" quat="1 -1 0 0">
+                <inertial mass="1.225946" pos="-1.1953e-2 4.1065e-2 -3.8437e-2"
+                  fullinertia="3.5549e-2 2.9474e-2 8.627e-3 -2.117e-3 -4.037e-3 2.29e-4"/>
+                <joint name="joint5"/>
+                <geom mesh="link5_0" material="black" class="visual"/>
+                <geom mesh="link5_1" material="white" class="visual"/>
+                <geom mesh="link5_2" material="white" class="visual"/>
+                <geom mesh="link5_c0" class="collision"/>
+                <geom mesh="link5_c1" class="collision"/>
+                <geom mesh="link5_c2" class="collision"/>
+                <body name="link6" quat="1 1 0 0">
+                  <inertial mass="1.666555" pos="6.0149e-2 -1.4117e-2 -1.0517e-2"
+                    fullinertia="1.964e-3 4.354e-3 5.433e-3 1.09e-4 -1.158e-3 3.41e-4"/>
+                  <joint name="joint6" range="-0.0175 3.7525"/>
+                  <geom mesh="link6_0" material="off_white" class="visual"/>
+                  <geom mesh="link6_1" material="white" class="visual"/>
+                  <geom mesh="link6_2" material="black" class="visual"/>
+                  <geom mesh="link6_3" material="white" class="visual"/>
+                  <geom mesh="link6_4" material="white" class="visual"/>
+                  <geom mesh="link6_5" material="white" class="visual"/>
+                  <geom mesh="link6_6" material="white" class="visual"/>
+                  <geom mesh="link6_7" material="light_blue" class="visual"/>
+                  <geom mesh="link6_8" material="light_blue" class="visual"/>
+                  <geom mesh="link6_9" material="black" class="visual"/>
+                  <geom mesh="link6_10" material="black" class="visual"/>
+                  <geom mesh="link6_11" material="white" class="visual"/>
+                  <geom mesh="link6_12" material="green" class="visual"/>
+                  <geom mesh="link6_13" material="white" class="visual"/>
+                  <geom mesh="link6_14" material="black" class="visual"/>
+                  <geom mesh="link6_15" material="black" class="visual"/>
+                  <geom mesh="link6_16" material="white" class="visual"/>
+                  <geom mesh="link6_c" class="collision"/>
+                  <body name="link7" pos="0.088 0 0" quat="1 1 0 0">
+                    <inertial mass="7.35522e-01" pos="1.0517e-2 -4.252e-3 6.1597e-2"
+                      fullinertia="1.2516e-2 1.0027e-2 4.815e-3 -4.28e-4 -1.196e-3 -7.41e-4"/>
+                    <joint name="joint7"/>
+                    <geom mesh="link7_0" material="white" class="visual"/>
+                    <geom mesh="link7_1" material="black" class="visual"/>
+                    <geom mesh="link7_2" material="black" class="visual"/>
+                    <geom mesh="link7_3" material="black" class="visual"/>
+                    <geom mesh="link7_4" material="black" class="visual"/>
+                    <geom mesh="link7_5" material="black" class="visual"/>
+                    <geom mesh="link7_6" material="black" class="visual"/>
+                    <geom mesh="link7_7" material="white" class="visual"/>
+                    <geom mesh="link7_c" class="collision"/>
+                    <!-- Bota SensONE Serial: m=0.22 kg, d=70 mm, h=35 mm (uniform cylinder).
+                         Matches config/default.yaml :: end_effector.sensone and the
+                         libfranka setLoad values. Inertia about COM:
+                           Ixx = Iyy = (1/12)*m*(3r^2 + h^2) = 8.98333e-5
+                           Izz = 0.5*m*r^2                  = 1.34750e-4 -->
+                    <body name="ft_sensor" pos="0 0 0.107">
+                      <!-- mass and diaginertia scaled by 1.10 from original (0.22 kg, see
+                           comment block above), based on diagnose_gravity_comp.py 2026-04-26
+                           closed-loop validation (5/5 poses noise floor at scale=1.10). -->
+                      <inertial mass="0.242" pos="0 0 0.0175" diaginertia="9.881663e-5 9.881663e-5 1.482250e-4"/>
+                      <geom mesh="sen_a000" material="sensor_orange" class="visual"/>
+                      <geom type="cylinder" size="0.035 0.0175" pos="0 0 0.0175" class="collision"/>
+                      <site name="ft_sensor_site" pos="0 0 0.0175" size="0.005" rgba="1 0 0 1"/>
+                    <body name="hand" pos="0 0 0.035" quat="0.9238795 0 0 -0.3826834">
+                      <!-- Lumped EE payload from FT-sensor multi-pose calibration
+                           (scripts/calibrate_ft_gravity_multi_pose.py, 12 cleaned poses
+                            from a 15-pose run, 3 outliers dropped, 2026-04-26):
+                             mass = 0.8470 kg  (Hand + fingers + stick + screws + cables)
+                             force residual RMS  = 0.33 N
+                             torque residual RMS = 0.009 Nm
+                             COM in sensor frame = [0.00500, 0.00605, 0.04420] m
+                             → COM in hand frame  = [-0.00075, 0.00781, 0.00920] m
+                                 (after subtracting hand_pos = [0,0,0.035] in sensor frame
+                                  and rotating -45° body-quat back into hand body axes)
+                           Inertia not measured by calibration; kept at original Hand value
+                           pending dedicated swing/pendulum identification.
+                           NOTE 2026-04-26: mass and diaginertia scaled by 1.10 from
+                           calibrated 0.8470 kg → 0.9317 kg, based on diagnose_gravity_comp.py
+                           closed-loop validation (J4 sag eliminated at scale=1.10). The 10%
+                           uplift is hypothesized to be unmodeled cable/screw mass. -->
+                      <inertial mass="0" pos="-0.00075 0.00781 0.00920" diaginertia="0.0011 0.00275 0.00187"/>
+                      <geom mesh="hand_0" material="off_white" class="visual"/>
+                      <geom mesh="hand_1" material="black" class="visual"/>
+                      <geom mesh="hand_2" material="black" class="visual"/>
+                      <geom mesh="hand_3" material="white" class="visual"/>
+                      <geom mesh="hand_4" material="off_white" class="visual"/>
+                      <geom mesh="hand_c" class="collision"/>
+
+                      <!--
+                        stick_aligned.obj 坐标系说明：
+                          正端（靠近指尖）= Z=0
+                          负端（远离指尖）= Z=-0.204m
+                          质心 Z ≈ -0.01526m
+
+                        MuJoCo 加载mesh时自动平移到质心坐标系：
+                          正端在body坐标系中的实际位置 = 0 - (-0.01526) = +0.01526m
+
+                        定位计算（hand坐标系）：
+                          指尖端面 Z = 0.1314m（fingertip_pad_collision_2/3 顶端）
+                          要求：stick正端比指尖端面往里缩进 1.9cm
+                          → stick正端在hand坐标系 Z = 0.1314 - 0.019 = 0.1124m
+                          → stick body pos_z = 0.1124 - 0.01526 = 0.09714m
+                      -->
+                      <!--
+                        stick_aligned.obj 翻转180度后（euler="3.14159 0 1.5708"）：
+                          凹陷端（靠近指尖）在body坐标系 Z = +0.01526m
+                          远端（靠近地面）  在body坐标系 Z = +0.01526 - 0.204 = -0.18874m
+
+                        定位计算（hand坐标系）：
+                          指尖端面 Z = 0.1314m
+                          要求：stick凹陷端比指尖端面高出 1.9cm
+                          → stick凹陷端在hand坐标系 Z = 0.1314 + 0.019 = 0.1504m
+                          → stick body pos_z = 0.1504 - 0.01526 = 0.13514m
+                      -->
+                      <!--
+                        stick 碰撞模型修复说明（euler="3.14159 0 1.5708" 翻转后坐标系）：
+                          凹陷端（夹持端） Z = +0.01526m
+                          远端（接触桌面） Z = -0.18874m，总长 0.204m
+                        原始问题：contype="0" conaffinity="0" 使 stick 完全没有碰撞，
+                                  导致 stick 末端穿入桌面。
+                        修复：保留 visual mesh（contype=0），新增 capsule 碰撞几何体。
+                      -->
+                      <body name="stick" pos="0 0 0.1708" euler="3.14159 0 1.5708">
+                          <!-- Mass and inertia lumped into hand body via FT-sensor calibration.
+                               Geometry kept for visualisation + collision; mass set to ~0. -->
+                          <inertial mass="1e-6"
+                                     pos="0 0 -0.08674"
+                                     diaginertia="1e-9 1e-9 1e-9"/>
+                          <!-- 仅视觉，不参与碰撞 -->
+                          <geom name="stick_visual" type="mesh" mesh="stick_mesh"
+                                rgba="0.8 0.5 0.2 1"
+                                contype="0" conaffinity="0" group="2"/>
+                          <!-- 碰撞胶囊：覆盖整根棒，从夹持端到末端 -->
+                          <geom name="stick_collision" type="capsule"
+                                fromto="0 0 0.01526  0 0 -0.18874"
+                                size="0.006"
+                                group="3"/>
+                          <!-- 末端追踪 site，用于控制器计算 -->
+                          <site name="stick_tip" pos="0 0 -0.18874" size="0.005" rgba="1 0 0 1"/>
+                      </body>
+
+                      <body name="left_finger" pos="0 0 0.0584">
+                        <!-- Mass lumped into hand body via FT-sensor calibration; tiny finite
+                             values kept here so the slide joint's inertia matrix stays SPD. -->
+                        <inertial mass="1e-4" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
+                        <joint name="finger_joint1" class="finger"/>
+                        <geom mesh="finger_0_0405" material="off_white" class="visual"/>
+                        <geom mesh="finger_1" material="black" class="visual"/>
+                        <geom name="left_finger_col" type="box" size="0.0171 0.0240 0.0600" pos="0 0.0086 0.0651" class="collision"/>
+                        <geom class="fingertip_pad_collision_1"/>
+                        <geom class="fingertip_pad_collision_2"/>
+                        <geom class="fingertip_pad_collision_3"/>
+                        <geom class="fingertip_pad_collision_4"/>
+                        <geom class="fingertip_pad_collision_5"/>
+                        <!-- 左手指内侧接触面测力 site：局部 Y=+0.019（内侧面），Z=0.038（夹持中心高度） -->
+                        <site name="left_finger_contact" pos="0 0.0326 0.0651" size="0.004" rgba="0 0 1 1"/>
+                      </body>
+                      <body name="right_finger" pos="0 0 0.0584" quat="0 0 0 1">
+                        <!-- Mass lumped into hand body via FT-sensor calibration; tiny finite
+                             values kept here so the slide joint's inertia matrix stays SPD. -->
+                        <inertial mass="1e-4" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
+                        <joint name="finger_joint2" class="finger"/>
+                        <geom mesh="finger_0_0405" material="off_white" class="visual"/>
+                        <geom mesh="finger_1" material="black" class="visual"/>
+                        <geom name="right_finger_col" type="box" size="0.0171 0.0240 0.0600" pos="0 0.0086 0.0651" class="collision"/>
+                        <geom class="fingertip_pad_collision_1"/>
+                        <geom class="fingertip_pad_collision_2"/>
+                        <geom class="fingertip_pad_collision_3"/>
+                        <geom class="fingertip_pad_collision_4"/>
+                        <geom class="fingertip_pad_collision_5"/>
+                        <!-- 右手指内侧接触面测力 site：局部 Y=+0.019（内侧面），Z=0.038（夹持中心高度） -->
+                        <site name="right_finger_contact" pos="0 0.0326 0.0651" size="0.004" rgba="0 0 1 1"/>
+                      </body>
+                    </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+
+  <tendon>
+    <fixed name="split">
+      <joint joint="finger_joint1" coef="0.5"/>
+      <joint joint="finger_joint2" coef="0.5"/>
+    </fixed>
+  </tendon>
+
+  <equality>
+    <joint joint1="finger_joint1" joint2="finger_joint2" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+  </equality>
+
+  <actuator>
+    <!-- Arm joints 1-7: direct torque control
+         ctrl [Nm] -> torque [Nm], gain=1, no position/velocity feedback
+         forcerange="-87 87" is the hardware torque limit (from <default class="panda">)
+         Real Franka limits: joints 1-4 = ±87 Nm, joints 5-7 = ±12 Nm
+         (forcerange kept at ±87 for all to match original model; tighten per-joint if needed) -->
+    <general class="panda" name="actuator1" joint="joint1" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+    <general class="panda" name="actuator2" joint="joint2" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+    <general class="panda" name="actuator3" joint="joint3" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+    <general class="panda" name="actuator4" joint="joint4" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+    <general class="panda" name="actuator5" joint="joint5" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+    <general class="panda" name="actuator6" joint="joint6" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+    <general class="panda" name="actuator7" joint="joint7" gainprm="1" biastype="none" ctrlrange="-87 87"/>
+
+    <!-- Gripper: unchanged, position-controlled PD on tendon "split"
+         ctrl range 0-255, Kp=50, Kd=2 -->
+    <general class="panda" name="actuator8" tendon="split" forcerange="-300 300" ctrlrange="0 255" gainprm="50 0 0" biasprm="0 -50 -2"/>
+  </actuator>
+
+  <keyframe>
+    <!-- ctrl for arm joints set to 0 [Nm] (torque control: controller takes over immediately)
+         qpos unchanged from original home configuration -->
+    <key name="home" qpos="0 0 0 -1.57079 0 1.57079 -0.7853 0.04 0.04" ctrl="0 0 0 0 0 0 0 0"/>
+  </keyframe>
+
+  <sensor>
+    <force  name="ft_force"  site="ft_sensor_site"/>
+    <torque name="ft_torque" site="ft_sensor_site"/>
+    <!-- 左右手指夹持力传感器（局部坐标系三维力，仅用于监测，不参与控制） -->
+    <force name="left_finger_force"  site="left_finger_contact"/>
+    <force name="right_finger_force" site="right_finger_contact"/>
+  </sensor>
+
+  <contact>
+    <exclude body1="link0" body2="link1"/>
+    <pair geom1="left_finger_col" geom2="right_finger_col" solref="0.001 1" solimp="0.999 0.9999 0.0001 0.5 2"/>
+    <pair geom1="left_finger_col" geom2="stick_collision"/>
+    <pair geom1="right_finger_col" geom2="stick_collision"/>
+  </contact>
+</mujoco>
