@@ -11,12 +11,14 @@ import mujoco.viewer
 
 from core.state_machine import JointMoveStateMachine
 from core.controller import JointPDController
+from core.ft_processor import FTProcessor
 from core.payload_gravity import PayloadGravityCompensator
+from sensors.ft_mujoco import FTMuJoCo
 
 
 # panda.xml actuator definition (joints 1–7):
-#   <general gainprm="500" biastype="none"/>
-#   applied force = 500 × ctrl  (no bias subtracted)
+#   <general gainprm="1" biastype="none"/>
+#   applied force = 1 × ctrl  (no bias subtracted)
 #   → to command torque τ: ctrl = τ / ACTUATOR_GAIN
 # forcerange=[-87, 87] Nm clips the output inside MuJoCo.
 # This constant lives here because it is a property of the XML, not the controller.
@@ -28,7 +30,7 @@ class MuJoCoBackend:
 
     Usage::
 
-        backend = MuJoCoBackend("franka_emika_panda/scene.xml", cfg)
+        backend = MuJoCoBackend("franka_emika_panda/panda_impedance.xml", cfg)
         backend.load()
         backend.run()   # blocks until viewer is closed or FAILED
     """
@@ -40,6 +42,8 @@ class MuJoCoBackend:
         self._data:          mujoco.MjData              | None = None
         self._state_machine: JointMoveStateMachine      | None = None
         self._controller:    JointPDController          | None = None
+        self._ft_source:     FTMuJoCo                   | None = None
+        self._ft_processor:  FTProcessor                | None = None
         self._payload_comp:  PayloadGravityCompensator  | None = None
 
     # ------------------------------------------------------------------
@@ -47,7 +51,7 @@ class MuJoCoBackend:
     # ------------------------------------------------------------------
 
     def load(self) -> None:
-        """Load MJCF, reset to home, create state machine and controller."""
+        """Load MJCF, reset to home, create FT source, state machine, controller."""
         self._model = mujoco.MjModel.from_xml_path(self._xml_path)
         self._data  = mujoco.MjData(self._model)
 
@@ -55,13 +59,32 @@ class MuJoCoBackend:
         mujoco.mj_forward(self._model, self._data)
 
         # The home keyframe sets ctrl to joint-position-like values (matching qpos),
-        # but the first 7 actuators are torque-scaled (force = 500 × ctrl).
+        # but the first 7 actuators are torque-scaled (force = 1 × ctrl).
         # Zero them so no unexpected torque is applied before the loop starts.
         self._data.ctrl[:7] = 0.0
 
         print(f"Loaded MJCF: {self._xml_path}")
         self._print_ft_sensor_frame()
 
+        # ---- FT source: start immediately so data is available from tick 0 ----
+        ft_cfg = self._cfg.get("ft", {})
+        self._ft_source = FTMuJoCo(
+            model=self._model,
+            data=self._data,
+            force_sensor_name=ft_cfg.get("force_sensor_name", "ft_force"),
+            torque_sensor_name=ft_cfg.get("torque_sensor_name", "ft_torque"),
+            site_name=ft_cfg.get("site_name", "ft_sensor_site"),
+            output_frame=ft_cfg.get("output_frame", "site"),
+        )
+        self._ft_source.start()
+        print("FT source started.")
+
+        self._ft_processor = FTProcessor(
+            sign=float(ft_cfg.get("sign", 1.0)),
+            lowpass_alpha=float(ft_cfg.get("lowpass_alpha", 1.0)),
+        )
+
+        # ---- Controller + state machine ----------------------------------------
         self._controller    = JointPDController(self._cfg["joint_pd"])
         self._state_machine = JointMoveStateMachine(self._cfg)
 
@@ -95,9 +118,17 @@ class MuJoCoBackend:
                 q  = self._data.qpos[:7].copy()
                 dq = self._data.qvel[:7].copy()
 
+                # ---- FT data: read every tick, regardless of phase --------------
+                raw_ft = self._ft_source.get_latest()
+                processed_wrench = self._ft_processor.process(raw_ft.wrench)
+
+                # ---- State machine ----------------------------------------------
                 q_des, dq_des = self._state_machine.update(
                     t=self._data.time,
                     q_current=q,
+                    dq_current=dq,
+                    wrench=processed_wrench,
+                    ft_sample=raw_ft,
                 )
 
                 if q_des is None:

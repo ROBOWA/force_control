@@ -42,8 +42,12 @@ state_machine:
 
 # FT sensor (ROS topic from FT PC)
 ft:
+  source: ros
   topic: /ft_sensor/wrench
-  rate_hz: 400
+  output_frame: world
+  sign: 1.0
+  tare_on_approach: true
+  lowpass_alpha: 0.2            # light smoothing for 400 Hz hardware stream
 
 # Safety
 safety:

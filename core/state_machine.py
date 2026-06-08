@@ -84,8 +84,12 @@ class JointMoveStateMachine:
         self,
         t: float,
         q_current: np.ndarray,
+        **_,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Return (q_des, dq_des) for the current sim tick.
+
+        Accepts dq_current, wrench, ft_sample as keyword arguments (ignored here;
+        present so the backend call site is forward-compatible with contact phases).
 
         Returns (None, None) when the state machine has FAILED — the backend
         should break the simulation loop immediately.

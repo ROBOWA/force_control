@@ -56,9 +56,14 @@ state_machine:
 
 # FT source
 ft:
-  strategy: sensor              # "sensor" or "contact"
-  sensor_name: ft_sensor        # name of the MuJoCo sensor element
-  contact_body: hand
+  source: mujoco
+  force_sensor_name: ft_force
+  torque_sensor_name: ft_torque
+  site_name: ft_sensor_site
+  output_frame: world           # "site" keeps sensor frame; "world" rotates via site_xmat
+  sign: 1.0
+  tare_on_approach: true
+  lowpass_alpha: 1.0            # 1.0 = no filtering; reduce for hardware noise
 
 # Logging
 logging:

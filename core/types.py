@@ -24,6 +24,7 @@ class WrenchSample:
     t: float
     wrench: np.ndarray  # shape (6,) [Fx,Fy,Fz,Tx,Ty,Tz] in control frame [N, Nm]
     seq: int
+    valid: bool = True  # False when no data has arrived yet (hardware) or sensor absent
 
 
 @dataclass(frozen=True)
