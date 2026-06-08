@@ -1,14 +1,21 @@
 # MuJoCo simulation configuration (Mac development mode)
 
-mjcf: franka_emika_panda/scene.xml
+mjcf: franka_emika_panda/panda_impedance.xml
 
 # Milestone 1: IK target and joint-space trajectory
 ik:
   site_name: stick_tip            # named site in the MJCF to control
-  target_pos: [0.5, 0.0, 0.3]    # desired site position in world frame [m]
+  target_pos: [0.5, -0.2, 0.3]    # desired site position in world frame [m]
   move_time: 5.0                  # min-jerk move duration [s]
 
-  target_euler_xyz: [0, -30, 0]   # extra rotation in site body frame; [0,0,0] = keep current orientation
+  target_euler_xyz: [30, 0, 0]   # extra rotation in site body frame; [0,0,0] = keep current orientation
+
+# Payload gravity compensation (full-minus-zero MJCF method)
+payload_gravity:
+  enabled: false
+  model_full: franka_emika_panda/scene_payload_full.xml   # robot + ft_sensor + stick
+  model_zero: franka_emika_panda/scene_payload_zero.xml   # robot arm only
+  torque_clip: 15.0                                        # [Nm] per-joint safety clip
 
 # Joint-space PD gains (used during MOVE_JOINT and HOLD_JOINT)
 # Format: [joint1 … joint7]

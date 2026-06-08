@@ -2,6 +2,13 @@
 
 robot_ip: "172.16.0.2"
 
+# Payload gravity compensation (full-minus-zero MJCF method)
+payload_gravity:
+  enabled: false
+  model_full: franka_emika_panda/scene_payload_full.xml   # robot + ft_sensor + stick
+  model_zero: franka_emika_panda/scene_payload_zero.xml   # robot arm only
+  torque_clip: 15.0                                        # [Nm] per-joint safety clip
+
 # ControllerCore
 controller:
   max_torque_rate: 1.0          # [Nm] per 1 ms tick — conservative for first tests

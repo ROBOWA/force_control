@@ -14,7 +14,7 @@
     See README.md in this directory for path setup details.
   -->
   <compiler angle="radian"
-            meshdir="/home/yifan_wu/franka_interact/impedance_control/assets"
+            meshdir="assets"
             autolimits="true"/>
 
   <option integrator="implicitfast"/>
@@ -143,7 +143,7 @@
     <mesh name="finger_0_new" file="gripper_new_aligned.obj"/>
     <mesh name="finger_0_0405" file="finger_0_0405_aligned.obj"/>
     <mesh file="finger_1.obj"/>
-    <mesh name="sen_a000" file="SEN-A000_aligned.obj"/>
+    <mesh name="ft_sensor_mesh" file="ft_sensor.STL"/>
     <!-- Stick mesh -->
     <mesh name="stick_mesh" file="stick_aligned.obj"/>
   </asset>
@@ -253,15 +253,23 @@
                          libfranka setLoad values. Inertia about COM:
                            Ixx = Iyy = (1/12)*m*(3r^2 + h^2) = 8.98333e-5
                            Izz = 0.5*m*r^2                  = 1.34750e-4 -->
-                    <body name="ft_sensor" pos="0 0 0.107">
-                      <!-- mass and diaginertia scaled by 1.10 from original (0.22 kg, see
-                           comment block above), based on diagnose_gravity_comp.py 2026-04-26
-                           closed-loop validation (5/5 poses noise floor at scale=1.10). -->
-                      <inertial mass="0.242" pos="0 0 0.0175" diaginertia="9.881663e-5 9.881663e-5 1.482250e-4"/>
-                      <geom mesh="sen_a000" material="sensor_orange" class="visual"/>
-                      <geom type="cylinder" size="0.035 0.0175" pos="0 0 0.0175" class="collision"/>
-                      <site name="ft_sensor_site" pos="0 0 0.0175" size="0.005" rgba="1 0 0 1"/>
-                    <body name="hand" pos="0 0 0.035" quat="0.9238795 0 0 -0.3826834">
+                    <body name="ft_sensor" pos="0 0 0.145" euler="0 0 1.5708">
+                      <inertial mass="0.242" pos="0 0 -0.0205" diaginertia="9.881663e-5 9.881663e-5 1.482250e-4"/>
+
+                      <!-- Visual mesh of sensor body -->
+                      <geom type="mesh" mesh="ft_sensor_mesh"
+                            contype="0" conaffinity="0"
+                            rgba="0.1 0.1 0.1 0.9"/>
+
+                      <!-- Simplified collision shell — bit 0: never collides with sphere -->
+                      <geom name="ft_sensor_collision"
+                            type="cylinder" pos="0 0 -0.0205" size="0.0375 0.0145"
+                            contype="0" conaffinity="0"
+                            rgba="0 0 0 0"/>
+                                            <!-- FT measurement frame -->
+                      <body name="ft_frame" pos="0 0 0" quat="1 0 0 0">
+                        <site name="ft_sensor_site" pos="0 0 0" size="0.005" rgba="1 0 0 1"/>
+                    <body name="hand" pos="0 0 -0.00" quat="0.3826834 0 0 -0.9238795">
                       <!-- Lumped EE payload from FT-sensor multi-pose calibration
                            (scripts/calibrate_ft_gravity_multi_pose.py, 12 cleaned poses
                             from a 15-pose run, 3 outliers dropped, 2026-04-26):
@@ -370,6 +378,7 @@
                         <geom class="fingertip_pad_collision_5"/>
                         <!-- 右手指内侧接触面测力 site：局部 Y=+0.019（内侧面），Z=0.038（夹持中心高度） -->
                         <site name="right_finger_contact" pos="0 0.0326 0.0651" size="0.004" rgba="0 0 1 1"/>
+                        </body>
                       </body>
                     </body>
                     </body>
