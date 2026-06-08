@@ -9,7 +9,7 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 
-from core.joint_move_state_machine import JointMoveStateMachine
+from core.state_machine import JointMoveStateMachine
 from core.controller import JointPDController
 
 
@@ -68,6 +68,9 @@ class MuJoCoBackend:
     def run(self) -> None:
         """Open passive viewer and run the control loop (blocking)."""
         with mujoco.viewer.launch_passive(self._model, self._data) as viewer:
+            # Show coordinate axes for all sites, making the IK target site visible.
+            viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
+
             while viewer.is_running():
                 q  = self._data.qpos[:7].copy()
                 dq = self._data.qvel[:7].copy()

@@ -12,6 +12,42 @@ Q_LO = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973])
 Q_HI = np.array([ 2.8973,  1.7628,  2.8973, -0.0698,  2.8973,  3.7525,  2.8973])
 
 
+def euler_xyz_to_R(angles_deg: list[float]) -> np.ndarray:
+    """Convert intrinsic XYZ Euler angles (degrees) to a 3×3 rotation matrix.
+
+    Intrinsic XYZ means: first rotate around the body X axis by rx,
+    then around the (new) body Y axis by ry, then around the (new) body Z axis by rz.
+    Equivalent to extrinsic ZYX (rz applied first in world frame).
+
+    R = Rz @ Ry @ Rx
+
+    Args:
+        angles_deg: [rx, ry, rz] in degrees
+
+    Returns:
+        R: shape (3, 3) rotation matrix
+    """
+    rx, ry, rz = np.deg2rad(angles_deg)
+
+    cx, sx = np.cos(rx), np.sin(rx)
+    cy, sy = np.cos(ry), np.sin(ry)
+    cz, sz = np.cos(rz), np.sin(rz)
+
+    Rx = np.array([[1,   0,   0],
+                   [0,  cx, -sx],
+                   [0,  sx,  cx]])
+
+    Ry = np.array([[ cy,  0,  sy],
+                   [  0,  1,   0],
+                   [-sy,  0,  cy]])
+
+    Rz = np.array([[cz, -sz,  0],
+                   [sz,  cz,  0],
+                   [ 0,   0,  1]])
+
+    return Rz @ Ry @ Rx
+
+
 def min_jerk(t: float, T: float) -> tuple[float, float]:
     """Scalar min-jerk interpolation s(t) and its time derivative ds(t).
 

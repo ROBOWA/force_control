@@ -6,8 +6,9 @@ mjcf: franka_emika_panda/scene.xml
 ik:
   site_name: stick_tip            # named site in the MJCF to control
   target_pos: [0.5, 0.0, 0.3]    # desired site position in world frame [m]
-  keep_current_orientation: true  # hold the keyframe orientation during IK
   move_time: 5.0                  # min-jerk move duration [s]
+
+  target_euler_xyz: [0, -30, 0]   # extra rotation in site body frame; [0,0,0] = keep current orientation
 
 # Joint-space PD gains (used during MOVE_JOINT and HOLD_JOINT)
 # Format: [joint1 … joint7]
