@@ -1,3 +1,3 @@
 from .types import RobotStateLite, WrenchSample, TargetSample
-from .controller import ControllerCore
+from .controller import ControllerCore, JointPDController
 from .state_machine import StateMachine, Phase

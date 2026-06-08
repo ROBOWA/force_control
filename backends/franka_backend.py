@@ -18,10 +18,10 @@ import threading
 import time
 import numpy as np
 
-from ..core.types import RobotStateLite, TargetSample, WrenchSample
-from ..core.controller import ControllerCore
-from ..core.state_machine import StateMachine
-from ..core.safety import saturate_torque_rate
+from core.types import RobotStateLite, TargetSample, WrenchSample
+from core.controller import ControllerCore
+from core.state_machine import StateMachine
+from core.safety import saturate_torque_rate
 
 
 class FrankaBackend:

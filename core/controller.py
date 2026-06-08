@@ -121,3 +121,47 @@ class ControllerCore:
         # integral with anti-windup
         # correction mapped through Jacobian
         return np.zeros(7)
+
+
+# ---------------------------------------------------------------------------
+# Milestone 1: joint-space PD controller
+# ---------------------------------------------------------------------------
+
+class JointPDController:
+    """Stateless joint-space PD controller for Milestone 1.
+
+    Computes PD tracking torques given desired and actual joint state.
+    Does not know about MuJoCo, pylibfranka, IK, or gravity compensation —
+    those are handled by the backend or state machine.
+    """
+
+    def __init__(self, config: dict):
+        """
+        Args:
+            config: dict with keys:
+                kp  list[float] shape (7,) — position gains [Nm/rad]
+                kd  list[float] shape (7,) — velocity gains [Nm·s/rad]
+        """
+        self.kp = np.asarray(config["kp"], dtype=float)
+        self.kd = np.asarray(config["kd"], dtype=float)
+
+    def compute(
+        self,
+        q:      np.ndarray,
+        dq:     np.ndarray,
+        q_des:  np.ndarray,
+        dq_des: np.ndarray,
+    ) -> np.ndarray:
+        """Return PD torque command, shape (7,) [Nm].
+
+        Args:
+            q:      current joint positions [rad]
+            dq:     current joint velocities [rad/s]
+            q_des:  desired joint positions [rad]
+            dq_des: desired joint velocities [rad/s]
+        """
+        q      = np.asarray(q,      dtype=float)
+        dq     = np.asarray(dq,     dtype=float)
+        q_des  = np.asarray(q_des,  dtype=float)
+        dq_des = np.asarray(dq_des, dtype=float)
+        return self.kp * (q_des - q) + self.kd * (dq_des - dq)

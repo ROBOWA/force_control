@@ -9,7 +9,7 @@ import csv
 import time
 import numpy as np
 
-from ..core.types import WrenchSample, TargetSample
+from core.types import WrenchSample, TargetSample
 
 
 class FTReplaySource:

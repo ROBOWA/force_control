@@ -1,23 +1,26 @@
 """Main entry point for force-control experiments.
 
-Run from the repo root (force_control/):
+Run from the repo's **parent** directory (i.e. one level above force_control/):
 
     # MuJoCo simulation (Mac)
-    python -m scripts.run_controller --backend sim --config configs/sim.yaml
+    python -m force_control.scripts.run_controller \\
+        --backend sim --config force_control/configs/sim.yaml
 
     # Real robot, dry-run (imports + config check, no motion)
-    python -m scripts.run_controller --backend real --config configs/real.yaml --dry-run
+    python -m force_control.scripts.run_controller \\
+        --backend real --config force_control/configs/real.yaml --dry-run
 
     # Real robot, execute (prompts for confirmation)
-    python -m scripts.run_controller --backend real --config configs/real.yaml --execute
+    python -m force_control.scripts.run_controller \\
+        --backend real --config force_control/configs/real.yaml --execute
 
     # Offline replay from a CSV log
-    python -m scripts.run_controller --backend replay --log data/logs/example.csv
+    python -m force_control.scripts.run_controller \\
+        --backend replay --log force_control/data/logs/example.csv
 """
 
 from __future__ import annotations
 import argparse
-import sys
 import yaml
 
 
@@ -63,11 +66,8 @@ def run_real(config: dict, dry_run: bool) -> None:
 
 def run_replay(log_path: str) -> None:
     """Replay a CSV log through the controller core (no robot, no sim)."""
-    from force_control.sensors.ft_replay import FTReplaySource
+    from sensors.ft_replay import FTReplaySource
     # TODO: implement replay loop
-    # source = FTReplaySource(log_path)
-    # source.load()
-    # ...
     raise NotImplementedError("Replay backend not yet implemented.")
 
 
