@@ -12,9 +12,9 @@ ik:
 
 # Payload gravity compensation (full-minus-zero MJCF method)
 payload_gravity:
-  enabled: false
-  model_full: franka_emika_panda/scene_payload_full.xml   # robot + ft_sensor + stick
-  model_zero: franka_emika_panda/scene_payload_zero.xml   # robot arm only
+  enabled: True
+  model_full: franka_emika_panda/panda_impedance.xml   # robot + ft_sensor + stick
+  model_zero: franka_emika_panda/panda_impedance_4.xml   # robot arm only
   torque_clip: 15.0                                        # [Nm] per-joint safety clip
 
 # Joint-space PD gains (used during MOVE_JOINT and HOLD_JOINT)

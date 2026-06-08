@@ -1,203 +1,312 @@
 """Franka real-robot backend — Ubuntu Panda PC only.
 
-This module is intentionally NOT imported on Mac. It wraps pylibfranka and
-the ROS FT receiver. All pylibfranka and rospy imports are local so that
-import errors only occur if this backend is actually instantiated.
+Milestone 1: joint-space IK + min-jerk move, identical logic to MuJoCo sim.
 
-Threading model:
-    Thread A (ROS spin): receives FT at ~400 Hz → writes _ft_buffer
-    Thread B (outer loop, 400 Hz): reads FT, runs StateMachine → writes _target_buffer
-    Thread C (pylibfranka 1 kHz callback): reads buffers, runs ControllerCore
+All pylibfranka and rospy imports are local so that this file can be imported
+on Mac without errors (compile/syntax check only).
+
+Threading model (Milestone 1):
+    Thread A (ft_ros_spin): FTRosSource background thread — receives FT at ~400 Hz
+    Thread B (Enter-waiter):  inside JointMoveStateMachine.start() — waits for key press
+    Thread C (pylibfranka 1 kHz): torque callback — reads FT cache, runs state machine,
+                                  computes joint PD + payload gravity, returns Torques
 
 The 1 kHz callback MUST return within ~1 ms. It must not block on any lock,
 socket, or ROS primitive.
 """
 
 from __future__ import annotations
-import threading
 import time
 import numpy as np
 
-from core.types import RobotStateLite, TargetSample, WrenchSample
-from core.controller import ControllerCore
-from core.state_machine import StateMachine
+from core.state_machine import JointMoveStateMachine
+from core.controller import JointPDController
+from core.ft_processor import FTProcessor
+from core.payload_gravity import PayloadGravityCompensator
 from core.safety import saturate_torque_rate
+from sensors.ft_ros import FTRosSource
 
 
 class FrankaBackend:
     """Connects to a real Panda and runs the 1 kHz torque-control loop.
 
-    Usage::
+    Structurally analogous to MuJoCoBackend.  Reuses all core modules; this
+    class only provides the hardware wiring.
 
-        backend = FrankaBackend("172.16.0.2", config)
-        backend.start_ft_thread()
-        backend.start_outer_loop()
-        backend.run()   # blocks inside robot.control_torques()
+    Usage (new runner)::
+
+        backend = FrankaBackend(robot_ip, cfg)
+        backend.connect()
+        backend.start_ft_source()
+        backend.initialize_core_pipeline()
+        backend.run()                  # blocks inside robot.control_torques()
+
+    Usage (legacy run_controller.py)::
+
+        backend = FrankaBackend(robot_ip, cfg)
+        backend.connect()
+        backend.start_ft_thread()      # alias for start_ft_source()
+        backend.start_outer_loop()     # alias for initialize_core_pipeline()
+        backend.run()
     """
 
     def __init__(self, robot_ip: str, config: dict):
-        """
-        Args:
-            robot_ip: Panda controller IP address (e.g. "172.16.0.2")
-            config:   merged real config dict (from configs/real.yaml)
-        """
         self._robot_ip = robot_ip
         self._cfg = config
 
-        # Shared buffers — written by outer threads, read by 1 kHz callback.
-        # Python GIL makes single-object assignment effectively atomic for
-        # reads/writes of references, which is sufficient here.
-        self._ft_buffer: WrenchSample | None = None
-        self._target_buffer: TargetSample | None = None
-
-        self._stop_event = threading.Event()
-        self._controller: ControllerCore | None = None
-        self._state_machine: StateMachine | None = None
-
-        # pylibfranka objects — initialised in connect()
+        # Hardware objects — created in connect() / start_ft_source()
         self._robot = None
-        self._model = None
+        self._Torques = None       # pylibfranka Torques class, stored in run()
+
+        # Core pipeline — created in initialize_core_pipeline()
+        self._ft_source:        FTRosSource               | None = None
+        self._ft_processor:     FTProcessor               | None = None
+        self._state_machine:    JointMoveStateMachine     | None = None
+        self._joint_controller: JointPDController         | None = None
+        self._payload_comp:     PayloadGravityCompensator | None = None
+
+        # Pre-read robot state (captured in connect())
+        self._q_initial: np.ndarray = np.zeros(7)
+
+        # 1 kHz callback state — preallocated, never reallocated in callback
+        self._tau_prev        = np.zeros(7)
+        self._t_control       = 0.0
+        self._max_torque      = np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])
+        self._max_torque_rate = 1.0
+
+        # Lightweight timing stats (accumulated, printed 1 Hz)
+        self._stat_sum_us  = 0.0
+        self._stat_max_us  = 0.0
+        self._stat_ticks   = 0
+        self._last_print_t = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def connect(self) -> None:
-        """Connect to the robot and load the dynamics model.
+        """Connect to robot, set conservative collision behavior, read initial q.
 
-        Import pylibfranka here so Mac never touches it.
+        pylibfranka is imported here so Mac never touches it.
         """
-        # TODO: implement
-        # from pylibfranka import Robot, Frame
-        # self._robot = Robot(self._robot_ip)
-        # self._model = self._robot.load_model()   # or get_model()
-        raise NotImplementedError
+        from pylibfranka import Robot  # noqa: PLC0415
 
-    def start_ft_thread(self) -> threading.Thread:
-        """Start the ROS FT subscriber thread (Thread A).
+        print(f"Connecting to Franka at {self._robot_ip} …")
+        self._robot = Robot(self._robot_ip)
+        print("Connected.")
 
-        Import rospy here so Mac never touches it.
+        # Conservative joint-torque and Cartesian-force collision thresholds.
+        # Tune upward once the system is validated.
+        self._robot.set_collision_behavior(
+            [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0],  # lower torque [Nm] (7,)
+            [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0],  # upper torque [Nm] (7,)
+            [20.0, 20.0, 20.0, 25.0, 25.0, 25.0],          # lower force [N/Nm] (6,)
+            [20.0, 20.0, 20.0, 25.0, 25.0, 25.0],          # upper force [N/Nm] (6,)
+        )
+
+        state = self._robot.read_once()
+        self._q_initial = np.asarray(state.q, dtype=np.float64)
+        print(f"Initial q: {self._q_initial.round(4)}")
+
+    def start_ft_source(self) -> None:
+        """Create and start FTRosSource in its background thread.
+
+        Must be called before robot.control_torques() so the FT stream is
+        already running during HOLD / IK / WAIT_USER_CONFIRM / MOVE_JOINT.
         """
-        # TODO: implement
-        # thread = threading.Thread(target=self._ros_ft_loop, daemon=True)
-        # thread.start()
-        # return thread
-        raise NotImplementedError
+        ft_cfg = self._cfg.get("ft", {})
+        self._ft_source = FTRosSource(topic=ft_cfg.get("topic", "/ft_sensor/wrench"))
+        self._ft_source.start()
+        print("FT source started.")
 
-    def start_outer_loop(self) -> threading.Thread:
-        """Start the 400 Hz outer-loop thread (Thread B)."""
-        # TODO: implement
-        # thread = threading.Thread(target=self._outer_loop, daemon=True)
-        # thread.start()
-        # return thread
-        raise NotImplementedError
+    def start_ft_thread(self) -> None:
+        """Alias for start_ft_source() — backward compat with run_controller.py."""
+        self.start_ft_source()
+
+    def initialize_core_pipeline(self) -> None:
+        """Load IK model, create and start the core pipeline.
+
+        Must be called after connect() (needs self._q_initial).
+        Solves IK synchronously; launches Enter-waiter background thread.
+        Never called from inside the 1 kHz callback.
+        """
+        import mujoco  # noqa: PLC0415
+
+        ft_cfg = self._cfg.get("ft", {})
+
+        # ---- IK model -------------------------------------------------
+        ik_cfg = self._cfg.get("ik", {})
+        ik_xml = ik_cfg.get(
+            "mjcf",
+            self._cfg.get("payload_gravity", {}).get("model_full"),
+        )
+        if ik_xml is None:
+            raise ValueError(
+                "No IK model path: set ik.mjcf or payload_gravity.model_full in config"
+            )
+
+        ik_model = mujoco.MjModel.from_xml_path(ik_xml)
+        ik_data  = mujoco.MjData(ik_model)
+        ik_data.qpos[:7] = self._q_initial
+        ik_data.qvel[:]  = 0.0
+        mujoco.mj_forward(ik_model, ik_data)
+        print(f"IK model loaded: {ik_xml}")
+
+        # ---- FT processor ---------------------------------------------
+        self._ft_processor = FTProcessor(
+            sign=float(ft_cfg.get("sign", 1.0)),
+            lowpass_alpha=float(ft_cfg.get("lowpass_alpha", 1.0)),
+        )
+
+        # ---- State machine (IK + Enter-waiter thread) -----------------
+        self._state_machine = JointMoveStateMachine(self._cfg)
+        self._state_machine.start(ik_model, ik_data)   # synchronous IK solve
+
+        # ---- Joint PD controller --------------------------------------
+        self._joint_controller = JointPDController(self._cfg["joint_pd"])
+
+        # ---- Payload gravity compensation -----------------------------
+        pg_cfg = self._cfg.get("payload_gravity", {})
+        if pg_cfg.get("enabled", False):
+            self._payload_comp = PayloadGravityCompensator(self._cfg)
+            self._benchmark_payload_comp()
+        else:
+            print("Payload gravity compensation disabled.")
+
+        # ---- Safety limits from config --------------------------------
+        safety_cfg = self._cfg.get("safety", {})
+        self._max_torque = np.array(
+            safety_cfg.get("max_torque", [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]),
+            dtype=np.float64,
+        )
+        self._max_torque_rate = float(safety_cfg.get("max_torque_rate", 1.0))
+
+        print("Core pipeline ready. Entering torque control…")
+
+    def start_outer_loop(self) -> None:
+        """Alias for initialize_core_pipeline() — backward compat with run_controller.py."""
+        self.initialize_core_pipeline()
 
     def run(self) -> None:
         """Enter robot.control_torques() — blocks until finished or Ctrl+C."""
-        # TODO: implement
-        # from pylibfranka import Torques
-        # initial_state = self._robot.read_once()
-        # self._controller.reset(tau_init=np.zeros(7))
-        # try:
-        #     self._robot.control_torques(self._torque_callback)
-        # except KeyboardInterrupt:
-        #     pass
-        raise NotImplementedError
+        from pylibfranka import Torques  # noqa: PLC0415
+
+        # Store Torques class so the callback can use it without importing.
+        self._Torques = Torques
+
+        self._tau_prev[:]  = 0.0
+        self._t_control    = 0.0
+        self._last_print_t = time.perf_counter()
+
+        print("Torque control active — press Ctrl+C to stop.")
+        try:
+            self._robot.control_torques(self._torque_callback)
+        except KeyboardInterrupt:
+            print("\nInterrupted.")
 
     def stop(self) -> None:
-        """Signal all background threads to exit."""
-        self._stop_event.set()
+        """Stop the FT background thread (safe to call from any thread)."""
+        if self._ft_source is not None:
+            self._ft_source.stop()
 
     # ------------------------------------------------------------------
-    # 1 kHz torque callback (Thread C)
+    # 1 kHz torque callback
     # ------------------------------------------------------------------
 
-    def _torque_callback(self, robot_state, duration) -> object:
+    def _torque_callback(self, robot_state, duration):
         """Called by pylibfranka at ~1000 Hz.
 
         MUST return a Torques object within ~1 ms.
-        Must NOT block, print, write files, or wait on any synchronisation.
+        Must NOT block, print every tick, solve IK, call input(), or allocate
+        large objects.
         """
-        # TODO: implement
-        # from pylibfranka import Torques
-        # state   = self._build_state(robot_state, duration.to_sec())
-        # target  = self._target_buffer   # atomic reference read
-        # wrench  = self._ft_buffer       # atomic reference read
-        # if target is None or wrench is None:
-        #     return Torques(np.zeros(7).tolist())
-        # tau = self._controller.step(state, target, wrench, 1e-3,
-        #                             contact=self._state_machine.in_contact)
-        # if <finished>:
-        #     return Torques.finished(tau.tolist())
-        # return Torques(tau.tolist())
-        raise NotImplementedError
+        t0 = time.perf_counter()
+
+        q  = np.asarray(robot_state.q,  dtype=np.float64)
+        dq = np.asarray(robot_state.dq, dtype=np.float64)
+
+        dt = duration.to_sec() if hasattr(duration, "to_sec") else 1e-3
+        self._t_control += dt
+
+        # ---- FT: read latest cached sample every tick ----------------
+        raw_ft           = self._ft_source.get_latest()
+        processed_wrench = self._ft_processor.process(raw_ft.wrench)
+
+        # ---- State machine -------------------------------------------
+        q_des, dq_des = self._state_machine.update(
+            t=self._t_control,
+            q_current=q,
+            dq_current=dq,
+            wrench=processed_wrench,
+            ft_sample=raw_ft,
+        )
+
+        # FAILED state: hold current pose safely
+        if q_des is None:
+            q_des  = q.copy()
+            dq_des = np.zeros(7)
+
+        # ---- Joint PD torque -----------------------------------------
+        tau_joint_pd = self._joint_controller.compute(q, dq, q_des, dq_des)
+
+        # ---- Payload gravity (delta only) ----------------------------
+        # Franka firmware already compensates arm gravity internally.
+        # We only add the payload delta: G_full(q) - G_zero(q).
+        if self._payload_comp is not None:
+            tau_payload = self._payload_comp.compute(q)
+        else:
+            tau_payload = np.zeros(7)
+
+        tau_cmd = tau_joint_pd + tau_payload
+
+        # ---- Safety: clip then rate-limit ----------------------------
+        tau_cmd = np.clip(tau_cmd, -self._max_torque, self._max_torque)
+        tau_cmd = saturate_torque_rate(tau_cmd, self._tau_prev, self._max_torque_rate)
+        self._tau_prev = tau_cmd.copy()
+
+        # ---- Timing stats (accumulated; printed once per second) -----
+        self._update_stats((time.perf_counter() - t0) * 1e6)
+
+        return self._Torques(tau_cmd.tolist())
 
     # ------------------------------------------------------------------
-    # Thread A: ROS FT receiver
+    # Internals
     # ------------------------------------------------------------------
 
-    def _ros_ft_loop(self) -> None:
-        """Subscribe to /ft_sensor/wrench and update _ft_buffer.
+    def _benchmark_payload_comp(self) -> None:
+        """Print payload torque at home pose and benchmark compute time."""
+        q_home = np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785])
 
-        queue_size=1, tcpNoDelay=True — only the latest sample is kept.
-        """
-        # TODO: implement
-        # import rospy
-        # from geometry_msgs.msg import WrenchStamped
-        # rospy.Subscriber(
-        #     "/ft_sensor/wrench", WrenchStamped, self._ft_ros_cb,
-        #     queue_size=1, tcp_nodelay=True,
-        # )
-        # rospy.spin()
-        raise NotImplementedError
+        tau_check = self._payload_comp.compute(q_home)
+        print("Payload gravity torque at q_home [Nm]:")
+        for i, t in enumerate(tau_check):
+            print(f"  joint{i + 1}: {t:+.3f}")
 
-    def _ft_ros_cb(self, msg) -> None:
-        """ROS callback: unpack WrenchStamped into WrenchSample."""
-        # TODO: implement
-        # w = msg.wrench
-        # self._ft_buffer = WrenchSample(
-        #     t=msg.header.stamp.to_sec(),
-        #     wrench=np.array([w.force.x, w.force.y, w.force.z,
-        #                      w.torque.x, w.torque.y, w.torque.z]),
-        #     seq=msg.header.seq,
-        # )
-        raise NotImplementedError
+        n = 1000
+        t0 = time.perf_counter()
+        for _ in range(n):
+            self._payload_comp.compute(q_home)
+        bench_us = (time.perf_counter() - t0) * 1e6 / n
+        print(f"Payload comp compute: {bench_us:.1f} us / tick")
 
-    # ------------------------------------------------------------------
-    # Thread B: 400 Hz outer loop
-    # ------------------------------------------------------------------
+    def _update_stats(self, dt_us: float) -> None:
+        """Accumulate timing; print once per second — never every tick."""
+        self._stat_sum_us += dt_us
+        if dt_us > self._stat_max_us:
+            self._stat_max_us = dt_us
+        self._stat_ticks += 1
 
-    def _outer_loop(self) -> None:
-        """Run StateMachine at ~400 Hz and write TargetSamples to _target_buffer."""
-        # TODO: implement
-        # dt = 1.0 / 400.0
-        # while not self._stop_event.is_set():
-        #     t0 = time.perf_counter()
-        #     ft     = self._ft_buffer
-        #     state  = self._last_state   # cached from callback
-        #     if ft is not None and state is not None:
-        #         target = self._state_machine.update(time.time(), state, ft,
-        #                                              self._target_buffer)
-        #         self._target_buffer = target
-        #     elapsed = time.perf_counter() - t0
-        #     time.sleep(max(0.0, dt - elapsed))
-        raise NotImplementedError
-
-    # ------------------------------------------------------------------
-    # State conversion
-    # ------------------------------------------------------------------
-
-    def _build_state(self, robot_state, dt: float) -> RobotStateLite:
-        """Convert pylibfranka RobotState → RobotStateLite.
-
-        Computes J and coriolis via the Franka dynamics model.
-        """
-        # TODO: implement
-        # from pylibfranka import Frame
-        # q        = np.array(robot_state.q)
-        # dq       = np.array(robot_state.dq)
-        # O_T_EE   = np.array(self._model.pose(Frame.EndEffector, robot_state)).reshape(4, 4)
-        # J_full   = np.array(self._model.zero_jacobian(Frame.EndEffector, robot_state)).reshape(6, 7)
-        # coriolis = np.array(self._model.coriolis(robot_state))
-        # t        = time.perf_counter()
-        raise NotImplementedError
+        now = time.perf_counter()
+        elapsed = now - self._last_print_t
+        if elapsed >= 1.0:
+            avg  = self._stat_sum_us / self._stat_ticks
+            rate = self._stat_ticks / elapsed
+            print(
+                f"compute: avg {avg:.0f} us, "
+                f"max {self._stat_max_us:.0f} us, "
+                f"ticks/s {rate:.0f}"
+            )
+            self._stat_sum_us  = 0.0
+            self._stat_max_us  = 0.0
+            self._stat_ticks   = 0
+            self._last_print_t = now
