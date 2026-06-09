@@ -151,7 +151,7 @@ class JointMoveStateMachine:
         print(f"Initial site position: {ik_data.site_xpos[site_id].round(4)}")
         print(f"Target site position:  {target_pos}")
 
-        target_R = self._resolve_target_R(ik_data, site_id)
+        target_R = self._resolve_target_R(mj_model, ik_data, site_id)
         print(f"Target orientation R:\n{target_R.round(4)}")
         q_init = ik_data.qpos[:7].copy()
 
@@ -176,21 +176,55 @@ class JointMoveStateMachine:
         )
         self._confirm_thread.start()
 
-    def _resolve_target_R(self, ik_data, site_id: int) -> np.ndarray:
+    def _resolve_target_R(self, mj_model, ik_data, site_id: int) -> np.ndarray:
         """Return the 3×3 target orientation matrix from config.
 
-        Always starts from the current site orientation, then applies
-        target_euler_xyz as an additional intrinsic XYZ rotation in the
-        site's own body frame:
+        target_euler_xyz is applied as an additional intrinsic XYZ rotation on
+        top of a reference orientation:
 
-            target_R = R_current @ R_delta
+            target_R = R_ref @ R_delta
 
-        If target_euler_xyz is [0, 0, 0] (or omitted), orientation is unchanged.
+        By default R_ref is the controlled site's orientation at the model's
+        home keyframe (ik.orientation_reference: "keyframe").  This makes the
+        configured euler delta produce the SAME target orientation on hardware —
+        where IK is seeded from the live robot pose — as in sim, which already
+        starts at the keyframe.  Set ik.orientation_reference: "current" to apply
+        the delta on top of the live start orientation instead (legacy behavior).
+
+        If target_euler_xyz is [0, 0, 0] (or omitted), target_R == R_ref.
         """
-        R_current = ik_data.site_xmat[site_id].copy().reshape(3, 3)
+        R_ref = self._reference_orientation(mj_model, ik_data, site_id)
         euler = self._cfg_ik.get("target_euler_xyz", [0.0, 0.0, 0.0])
         R_delta = euler_xyz_to_R(euler)
-        return R_current @ R_delta
+        return R_ref @ R_delta
+
+    def _reference_orientation(self, mj_model, ik_data, site_id: int) -> np.ndarray:
+        """Site orientation that target_euler_xyz is applied relative to.
+
+        "keyframe" (default): evaluate the site orientation at the model's home
+        keyframe via a scratch MjData, so the reference is independent of the
+        live IK seed (the robot's actual start pose on hardware).
+        "current": use the live site orientation (orientation as seeded).
+        Falls back to the live orientation if the model defines no keyframe.
+        """
+        mode = str(self._cfg_ik.get("orientation_reference", "keyframe")).lower()
+
+        if mode == "keyframe" and mj_model.nkey > 0:
+            key_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_KEY, "home")
+            if key_id < 0:
+                key_id = 0
+            scratch = mujoco.MjData(mj_model)
+            mujoco.mj_resetDataKeyframe(mj_model, scratch, key_id)
+            mujoco.mj_forward(mj_model, scratch)
+            key_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_KEY, key_id)
+            print(f"Orientation reference: keyframe '{key_name}'")
+            return scratch.site_xmat[site_id].copy().reshape(3, 3)
+
+        if mode == "keyframe":
+            print("Orientation reference: current pose (model defines no keyframe)")
+        else:
+            print("Orientation reference: current pose")
+        return ik_data.site_xmat[site_id].copy().reshape(3, 3)
 
     def _wait_for_enter(self) -> None:
         input("\nIK solved. Press Enter to start moving...")

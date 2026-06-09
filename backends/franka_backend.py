@@ -25,6 +25,7 @@ from core.ft_processor import FTProcessor
 from core.payload_gravity import PayloadGravityCompensator
 from core.safety import saturate_torque_rate
 from sensors.ft_ros import FTRosSource
+from sensors.ft_shm import FTShmSource
 
 
 class FrankaBackend:
@@ -59,7 +60,7 @@ class FrankaBackend:
         self._Torques = None       # pylibfranka Torques class, stored in run()
 
         # Core pipeline — created in initialize_core_pipeline()
-        self._ft_source:        FTRosSource               | None = None
+        self._ft_source:        FTRosSource | FTShmSource | None = None
         self._ft_processor:     FTProcessor               | None = None
         self._state_machine:    JointMoveStateMachine     | None = None
         self._joint_controller: JointPDController         | None = None
@@ -80,6 +81,19 @@ class FrankaBackend:
         self._stat_ticks   = 0
         self._last_print_t = 0.0
 
+        # Debug FT heartbeat (10 Hz) — gated by config ft.debug_print
+        self._ft_debug = bool(self._cfg.get("ft", {}).get("debug_print", False))
+        self._last_ft_print_t = 0.0
+        # Two independent counters: by writer seq (authoritative msg count, one per
+        # bridged/received message) and by distinct timestamp (true unique-sample
+        # rate). If "by msg" >> "by stamp", the sensor republishes each sample.
+        self._ft_seq_count    = 0
+        self._ft_prev_seq     = None
+        self._ft_t_count      = 0
+        self._ft_prev_t       = None
+        self._ft_seq_at_print = 0
+        self._ft_t_at_print   = 0
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -98,10 +112,10 @@ class FrankaBackend:
         # Conservative joint-torque and Cartesian-force collision thresholds.
         # Tune upward once the system is validated.
         self._robot.set_collision_behavior(
-            [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0],  # lower torque [Nm] (7,)
-            [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0],  # upper torque [Nm] (7,)
-            [20.0, 20.0, 20.0, 25.0, 25.0, 25.0],          # lower force [N/Nm] (6,)
-            [20.0, 20.0, 20.0, 25.0, 25.0, 25.0],          # upper force [N/Nm] (6,)
+            [40.0, 40.0, 38.0, 38.0, 30.0, 25.0, 20.0],  # lower torque [Nm] (7,)
+            [40.0, 40.0, 38.0, 38.0, 30.0, 25.0, 20.0],  # upper torque [Nm] (7,)
+            [40.0, 40.0, 40.0, 50.0, 50.0, 50.0],          # lower force [N/Nm] (6,)
+            [40.0, 40.0, 40.0, 50.0, 50.0, 50.0],          # upper force [N/Nm] (6,)
         )
 
         state = self._robot.read_once()
@@ -115,9 +129,20 @@ class FrankaBackend:
         already running during HOLD / IK / WAIT_USER_CONFIRM / MOVE_JOINT.
         """
         ft_cfg = self._cfg.get("ft", {})
-        self._ft_source = FTRosSource(topic=ft_cfg.get("topic", "/ft_sensor/wrench"))
+        source = str(ft_cfg.get("source", "ros")).lower()
+        if source == "shm":
+            # Separate-process bridge (scripts/ft_node.py) feeds /dev/shm at full
+            # rate; we just read it here — no ROS, no GIL contention with the loop.
+            self._ft_source = FTShmSource(
+                shm_path=ft_cfg.get("shm_path", "/dev/shm/ft_wrench"),
+            )
+        else:
+            self._ft_source = FTRosSource(
+                topic=ft_cfg.get("topic", "/ft_sensor/wrench"),
+                queue_size=int(ft_cfg.get("queue_size", 0)),
+            )
         self._ft_source.start()
-        print("FT source started.")
+        print(f"FT source started ({source}).")
 
     def start_ft_thread(self) -> None:
         """Alias for start_ft_source() — backward compat with run_controller.py."""
@@ -197,6 +222,13 @@ class FrankaBackend:
         self._tau_prev[:]  = 0.0
         self._t_control    = 0.0
         self._last_print_t = time.perf_counter()
+        self._last_ft_print_t = time.perf_counter()
+        self._ft_seq_count = 0
+        self._ft_prev_seq = None
+        self._ft_t_count = 0
+        self._ft_prev_t = None
+        self._ft_seq_at_print = 0
+        self._ft_t_at_print = 0
 
         print("Torque control active — press Ctrl+C to stop.")
         try:
@@ -231,6 +263,40 @@ class FrankaBackend:
         # ---- FT: read latest cached sample every tick ----------------
         raw_ft           = self._ft_source.get_latest()
         processed_wrench = self._ft_processor.process(raw_ft.wrench)
+
+        # ---- Debug: FT heartbeat every 0.1 s (10 Hz), gated by config -
+        # Reports TWO rates so we can tell "throttled" from "republished":
+        #   by msg   = distinct writer seq  -> messages actually reaching the loop
+        #   by stamp = distinct timestamps  -> unique sensor samples
+        # by msg >> by stamp means the sensor republishes each sample N times.
+        # Bring-up aid only — blocking print on the 1 kHz RT thread;
+        # set ft.debug_print: false for timing-sensitive runs.
+        if self._ft_debug:
+            w = raw_ft.wrench
+            if raw_ft.valid:
+                if raw_ft.seq != self._ft_prev_seq:
+                    self._ft_seq_count += 1
+                    self._ft_prev_seq = raw_ft.seq
+                if raw_ft.t != self._ft_prev_t:
+                    self._ft_t_count += 1
+                    self._ft_prev_t = raw_ft.t
+
+            now_dbg = time.perf_counter()
+            if now_dbg - self._last_ft_print_t >= 0.1:
+                dt = now_dbg - self._last_ft_print_t
+                hz_seq = (self._ft_seq_count - self._ft_seq_at_print) / dt if dt > 0 else 0.0
+                hz_t = (self._ft_t_count - self._ft_t_at_print) / dt if dt > 0 else 0.0
+                self._last_ft_print_t = now_dbg
+                self._ft_seq_at_print = self._ft_seq_count
+                self._ft_t_at_print = self._ft_t_count
+                print(
+                    f"FT {'ok' if raw_ft.valid else 'NO-DATA'} "
+                    f"rawseq={raw_ft.seq} "          # current b[2] from the writer
+                    f"recv={self._ft_seq_count} "
+                    f"(~{hz_seq:.0f} Hz by msg, ~{hz_t:.0f} Hz by stamp)  "
+                    f"F=[{w[0]:+7.2f} {w[1]:+7.2f} {w[2]:+7.2f}]  "
+                    f"T=[{w[3]:+7.2f} {w[4]:+7.2f} {w[5]:+7.2f}]"
+                )
 
         # ---- State machine -------------------------------------------
         q_des, dq_des = self._state_machine.update(

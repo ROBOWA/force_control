@@ -6,9 +6,9 @@ robot_ip: "172.16.0.2"
 ik:
   mjcf: "franka_emika_panda/panda_impedance.xml"
   site_name: "stick_tip"
-  target_pos: [0.5, -0.2, 0.3]
-  target_euler_xyz: [30.0, 0.0, 0.0]
-  move_time: 5.0
+  target_pos: [0.5, -0.2, 0.2]
+  target_euler_xyz: [-10.0, 0.0, 0.0]
+  move_time: 3.0
 
 # Joint-space PD gains (Milestone 1 — same structure as sim)
 joint_pd:
@@ -17,18 +17,22 @@ joint_pd:
 
 # FT sensor (ROS topic from FT PC)
 ft:
-  source: ros
-  topic: /ft_sensor/wrench
+  source: shm                  # "shm": read /dev/shm fed by scripts/ft_node.py (full 400 Hz, no GIL contention)
+                               # "ros": subscribe in-process (starved to ~45 Hz by the RT loop)
+  shm_path: /dev/shm/ft_wrench # shared-memory buffer written by scripts/ft_node.py
+  topic: /ft_sensor/wrench     # used by ft_node (and by source=ros)
   output_frame: world
   sign: 1.0
   tare_on_approach: true
   lowpass_alpha: 0.2            # light smoothing for 400 Hz hardware stream
+  debug_print: true            # 10 Hz FT heartbeat (count + values) in the control loop; false for timing-sensitive runs
+  queue_size: 0                # ROS subscriber (source=ros only): 0 = unbounded/full rate like rostopic; >0 keeps only the last N per batch (throttles)
 
 # Payload gravity compensation (full-minus-zero MJCF method)
 payload_gravity:
   enabled: True
-  model_full: franka_emika_panda/scene_payload_full.xml   # robot + ft_sensor + stick
-  model_zero: franka_emika_panda/scene_payload_zero.xml   # robot arm only
+  model_full: franka_emika_panda/panda_impedance.xml   # robot + ft_sensor + stick
+  model_zero: franka_emika_panda/panda_impedance_4.xml   # robot arm only
   torque_clip: 15.0                                        # [Nm] per-joint safety clip
 
 # Safety

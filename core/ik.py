@@ -4,6 +4,8 @@ These functions are the only place in core/ that imports mujoco.
 No pylibfranka or ROS imports.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import mujoco
 

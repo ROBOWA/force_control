@@ -33,12 +33,19 @@ class FTRosSource:
     def __init__(
         self,
         topic: str = "/ft_sensor/wrench",
+        queue_size: int = 0,
     ):
         """
         Args:
-            topic:  ROS topic name publishing geometry_msgs/WrenchStamped.
+            topic:       ROS topic name publishing geometry_msgs/WrenchStamped.
+            queue_size:  <=0 (default) -> unbounded, like `rostopic hz`: every
+                         message in each received batch is delivered (full rate).
+                         A positive value makes rospy keep only the last N of each
+                         batch and discard the rest — which throttles a fast
+                         stream and is rarely what you want here.
         """
         self._topic = topic
+        self._queue_size = int(queue_size)
         self._seq = 0
         self._lock = threading.Lock()
         self._latest: WrenchSample = _ZERO_SAMPLE
@@ -51,6 +58,15 @@ class FTRosSource:
 
     def start(self) -> None:
         """Start the ROS subscriber in a background daemon thread."""
+        import rospy
+
+        if not rospy.core.is_initialized():
+            rospy.init_node(
+                "force_control_ft_source",
+                anonymous=True,
+                disable_signals=True,
+            )
+
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._spin, daemon=True, name="ft_ros_spin"
@@ -79,13 +95,14 @@ class FTRosSource:
         import rospy  # noqa: PLC0415
         from geometry_msgs.msg import WrenchStamped  # noqa: PLC0415
 
-        rospy.Subscriber(
-            self._topic,
-            WrenchStamped,
-            self._cb,
-            queue_size=1,
-            tcp_nodelay=True,
-        )
+        # queue_size<=0 -> omit it (rospy None): keep EVERY message per batch,
+        # like `rostopic hz`. A positive queue_size truncates each received batch
+        # to its last N messages, which throttles a fast stream. Large buff_size
+        # lets one recv drain the socket.
+        sub_kwargs = dict(tcp_nodelay=True, buff_size=2 ** 24)
+        if self._queue_size and self._queue_size > 0:
+            sub_kwargs["queue_size"] = self._queue_size
+        rospy.Subscriber(self._topic, WrenchStamped, self._cb, **sub_kwargs)
         # Block here; rospy dispatches _cb in its own callback thread.
         # _stop_event.wait() unblocks when stop() is called.
         self._stop_event.wait()
