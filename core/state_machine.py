@@ -27,6 +27,7 @@ class JointMoveState(Enum):
     SOLVING_IK       = auto()   # synchronous; never seen by update()
     WAIT_USER_CONFIRM = auto()
     MOVE_JOINT       = auto()
+    TARE             = auto()   # at the IK goal: average FT for tare_duration, then tare
     FAILED           = auto()
 
 
@@ -43,10 +44,15 @@ class JointMoveStateMachine:
             break                      # FAILED state — stop sim loop
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, ft_processor=None):
         """
         Args:
-            config: full sim config dict; reads config["ik"] for IK parameters.
+            config: full config dict; reads config["ik"] and config["ft"].
+            ft_processor: optional FTProcessor. When provided and ft.tare_on_hold
+                is true, the machine spends ft.tare_duration seconds holding the
+                IK goal pose, averages the FT reading there, then tares the
+                processor — zeroing the payload's gravity wrench at that
+                orientation so any subsequent wrench is pure contact force.
         """
         self._cfg_ik = config["ik"]
         self.state = JointMoveState.HOLD
@@ -60,6 +66,18 @@ class JointMoveStateMachine:
 
         self._enter_pressed  = threading.Event()
         self._confirm_thread: threading.Thread | None = None
+
+        # ---- Payload FT auto-tare at the IK goal (entered after MOVE_JOINT) --
+        ft_cfg = config.get("ft", {})
+        self._ft_processor  = ft_processor
+        self._tare_enabled  = (
+            bool(ft_cfg.get("tare_on_hold", True)) and ft_processor is not None
+        )
+        self._tare_duration = float(ft_cfg.get("tare_duration", 2.0))
+        self._tare_t0       = 0.0
+        self._tare_sum      = np.zeros(6)   # running sum of raw wrench samples
+        self._tare_count    = 0
+        self._tare_last_seq = None          # dedup: only accumulate fresh samples
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -84,12 +102,16 @@ class JointMoveStateMachine:
         self,
         t: float,
         q_current: np.ndarray,
+        dq_current: np.ndarray | None = None,
+        wrench: np.ndarray | None = None,
+        ft_sample: WrenchSample | None = None,
         **_,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Return (q_des, dq_des) for the current sim tick.
+        """Return (q_des, dq_des) for the current control tick.
 
-        Accepts dq_current, wrench, ft_sample as keyword arguments (ignored here;
-        present so the backend call site is forward-compatible with contact phases).
+        ft_sample (raw WrenchSample) is consumed only in the TARE state to
+        average the payload baseline; wrench/dq_current are accepted for
+        forward-compatibility with future contact phases.
 
         Returns (None, None) when the state machine has FAILED — the backend
         should break the simulation loop immediately.
@@ -116,15 +138,59 @@ class JointMoveStateMachine:
                 return q_des, dq_des
             else:
                 self.q_hold = self.q_goal.copy()
-                self.state  = JointMoveState.HOLD
-                print("Reached HOLD")
+                if self._tare_enabled:
+                    self._begin_tare(t)
+                else:
+                    self.state = JointMoveState.HOLD
+                    print("Reached HOLD")
                 return self.q_hold.copy(), np.zeros(7)
+
+        if self.state == JointMoveState.TARE:
+            # Hold the goal pose and average fresh, valid FT samples. When the
+            # window elapses, tare the processor so the payload's gravity wrench
+            # at this orientation becomes the new zero.
+            if ft_sample is not None and getattr(ft_sample, "valid", False):
+                if ft_sample.seq != self._tare_last_seq:
+                    self._tare_sum += np.asarray(ft_sample.wrench, dtype=float)
+                    self._tare_count += 1
+                    self._tare_last_seq = ft_sample.seq
+            if (t - self._tare_t0) >= self._tare_duration:
+                self._finish_tare()
+            return self.q_hold.copy(), np.zeros(7)
 
         if self.state == JointMoveState.FAILED:
             return self.q_hold.copy(), np.zeros(7)
 
         # SOLVING_IK is synchronous — update() should never see this.
         return self.q_hold.copy(), np.zeros(7)
+
+    # ------------------------------------------------------------------
+    # Payload FT auto-tare (entered once after MOVE_JOINT completes)
+    # ------------------------------------------------------------------
+
+    def _begin_tare(self, t: float) -> None:
+        """Enter TARE: reset the accumulator and start the averaging window."""
+        self._tare_t0       = t
+        self._tare_sum[:]   = 0.0
+        self._tare_count    = 0
+        self._tare_last_seq = None
+        self.state = JointMoveState.TARE
+        print(f"Reached goal — averaging FT for {self._tare_duration:.1f}s "
+              "to tare the payload baseline (keep the tool free of contact)...")
+
+    def _finish_tare(self) -> None:
+        """Average the recorded samples, tare the processor, enter HOLD."""
+        if self._tare_count > 0:
+            mean_raw = self._tare_sum / self._tare_count
+            self._ft_processor.tare(mean_raw)
+            print(f"Payload baseline tared over {self._tare_count} FT samples:")
+            print(f"  bias (raw wrench) = {np.round(mean_raw, 3).tolist()}")
+            print("  Subsequent wrench now reads contact force only.")
+        else:
+            print("⚠️  No valid FT samples during the tare window — "
+                  "baseline NOT tared (check the FT source).")
+        self.state = JointMoveState.HOLD
+        print("Reached HOLD")
 
     # ------------------------------------------------------------------
     # IK (synchronous, called from start())

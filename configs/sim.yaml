@@ -63,6 +63,8 @@ ft:
   output_frame: world           # "site" keeps sensor frame; "world" rotates via site_xmat
   sign: 1.0
   tare_on_approach: true
+  tare_on_hold: true            # after reaching the IK goal, average FT for tare_duration and zero the payload baseline
+  tare_duration: 2.0            # [s] FT averaging window in the TARE state (entered once after the move completes)
   lowpass_alpha: 1.0            # 1.0 = no filtering; reduce for hardware noise
 
 # Logging

@@ -86,7 +86,11 @@ class MuJoCoBackend:
 
         # ---- Controller + state machine ----------------------------------------
         self._controller    = JointPDController(self._cfg["joint_pd"])
-        self._state_machine = JointMoveStateMachine(self._cfg)
+        # Pass the FT processor so the machine can auto-tare the payload baseline
+        # once it reaches the IK goal (TARE state).
+        self._state_machine = JointMoveStateMachine(
+            self._cfg, ft_processor=self._ft_processor
+        )
 
         pg_cfg = self._cfg.get("payload_gravity", {})
         if pg_cfg.get("enabled", False):

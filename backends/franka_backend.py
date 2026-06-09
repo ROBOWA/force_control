@@ -184,7 +184,11 @@ class FrankaBackend:
         )
 
         # ---- State machine (IK + Enter-waiter thread) -----------------
-        self._state_machine = JointMoveStateMachine(self._cfg)
+        # Pass the FT processor so the machine can auto-tare the payload
+        # baseline once it reaches the IK goal (TARE state).
+        self._state_machine = JointMoveStateMachine(
+            self._cfg, ft_processor=self._ft_processor
+        )
         self._state_machine.start(ik_model, ik_data)   # synchronous IK solve
 
         # ---- Joint PD controller --------------------------------------
@@ -272,7 +276,10 @@ class FrankaBackend:
         # Bring-up aid only — blocking print on the 1 kHz RT thread;
         # set ft.debug_print: false for timing-sensitive runs.
         if self._ft_debug:
-            w = raw_ft.wrench
+            # Print the PROCESSED wrench (sign + bias + low-pass): before the
+            # TARE it tracks the raw reading, and once the payload baseline is
+            # tared at the IK goal it shows the contact force only.
+            w = processed_wrench
             if raw_ft.valid:
                 if raw_ft.seq != self._ft_prev_seq:
                     self._ft_seq_count += 1
@@ -294,8 +301,8 @@ class FrankaBackend:
                     f"rawseq={raw_ft.seq} "          # current b[2] from the writer
                     f"recv={self._ft_seq_count} "
                     f"(~{hz_seq:.0f} Hz by msg, ~{hz_t:.0f} Hz by stamp)  "
-                    f"F=[{w[0]:+7.2f} {w[1]:+7.2f} {w[2]:+7.2f}]  "
-                    f"T=[{w[3]:+7.2f} {w[4]:+7.2f} {w[5]:+7.2f}]"
+                    f"F(tared)=[{w[0]:+7.2f} {w[1]:+7.2f} {w[2]:+7.2f}]  "
+                    f"T(tared)=[{w[3]:+7.2f} {w[4]:+7.2f} {w[5]:+7.2f}]"
                 )
 
         # ---- State machine -------------------------------------------

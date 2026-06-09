@@ -46,13 +46,21 @@ class FTProcessor:
     # Public API
     # ------------------------------------------------------------------
 
-    def tare(self, raw_wrench: np.ndarray) -> None:
-        """Capture the current raw reading as the bias.
+    def tare(self, raw_wrench: np.ndarray, reset_filter: bool = True) -> None:
+        """Capture a raw reading (e.g. a multi-sample average) as the bias.
 
-        After tare(), process() returns zero for the same input and deviations
-        from that baseline for subsequent readings.
+        After tare(), process() returns zero for that same input and only
+        deviations from the baseline for subsequent readings — so once the
+        payload's gravity wrench at a fixed orientation is tared, any further
+        reading is the external (contact) force applied to the payload.
+
+        reset_filter (default True) clears the EWA state so the first processed
+        output snaps to ~0 instead of decaying from the pre-tare payload level.
         """
-        self._bias = raw_wrench.copy() * self._sign
+        self._bias = np.asarray(raw_wrench, dtype=float).copy() * self._sign
+        if reset_filter:
+            self._filtered[:] = 0.0
+            self._initialized = False
 
     def process(self, raw_wrench: np.ndarray) -> np.ndarray:
         """Return a processed (6,) wrench array.

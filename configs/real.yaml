@@ -24,6 +24,8 @@ ft:
   output_frame: world
   sign: 1.0
   tare_on_approach: true
+  tare_on_hold: true            # after reaching the IK goal, average FT for tare_duration and zero the payload baseline
+  tare_duration: 5.0            # [s] FT averaging window in the TARE state (entered once after the move completes)
   lowpass_alpha: 0.2            # light smoothing for 400 Hz hardware stream
   debug_print: true            # 10 Hz FT heartbeat (count + values) in the control loop; false for timing-sensitive runs
   queue_size: 0                # ROS subscriber (source=ros only): 0 = unbounded/full rate like rostopic; >0 keeps only the last N per batch (throttles)
