@@ -7,7 +7,7 @@ ik:
   mjcf: "franka_emika_panda/panda_impedance.xml"
   site_name: "stick_tip"
   target_pos: [0.5, -0.2, 0.2]
-  target_euler_xyz: [-10.0, 0.0, 0.0]
+  target_euler_xyz: [30.0, 0.0, 0.0]
   move_time: 3.0
 
 # Joint-space PD gains (Milestone 1 — same structure as sim)
@@ -34,6 +34,21 @@ payload_gravity:
   model_full: franka_emika_panda/panda_impedance.xml   # robot + ft_sensor + stick
   model_zero: franka_emika_panda/panda_impedance_4.xml   # robot arm only
   torque_clip: 15.0                                        # [Nm] per-joint safety clip
+
+# Payload gravity-compensation calibration (scripts/calibrate_payload_gravity.py)
+# Multi-pose FT-gravity fit -> mass + CoM in the ft_sensor_site frame, written as
+# an MJCF <include> fragment that model_full (panda_impedance.xml) loads.
+payload_calibration:
+  model: franka_emika_panda/panda_impedance.xml      # model whose site defines the fit frame (FK)
+  site_name: ft_sensor_site                          # frame the mass/CoM is expressed in
+  fragment_out: franka_emika_panda/ft_payload.xml    # <include>d by panda_impedance.xml; overwritten each run
+  fit_npz: data/payload_gravity_fit.npz              # audit dump (mass, com, bias, raw ft+rotations)
+  body_name: ft_payload                              # name of the generated payload body
+  diaginertia: [0.0011, 0.00275, 0.00187]            # carried over (gravity fit does not measure inertia)
+  num_poses: 6                                       # >=4; vary orientation widely between poses
+  samples_per_pose: 300                              # distinct shared-memory FT frames averaged per pose
+  settle: 2.0                                        # [s] wait before averaging
+  mass_scale: 1.0                                    # empirical uplift applied to fitted mass (was 1.10)
 
 # Safety
 safety:
