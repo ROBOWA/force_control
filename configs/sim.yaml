@@ -46,7 +46,7 @@ controller:
 state_machine:
   # --- Milestone 2: post-tare Cartesian approach + z-force hold ---
   approach_enabled: true        # false → stop at HOLD after the tare (Milestone-1 behavior)
-  approach_speed: 0.005         # [m/s] constant world -Z descent speed
+  approach_speed: 0.05         # [m/s] constant world -Z descent speed
   contact_fz_threshold: 2.0     # [N] +Fz (compression) level that counts as contact
   contact_confirm_samples: 5    # consecutive ticks above threshold before switching to force hold
   F_normal_desired: 3.0         # [N] target normal force held during FORCE_HOLD
@@ -71,7 +71,7 @@ ft:
   torque_sensor_name: ft_torque
   site_name: ft_sensor_site
   output_frame: world           # "site" keeps sensor frame; "world" rotates via site_xmat
-  sign: 1.0
+  sign: -1.0
   tare_on_approach: true
   tare_on_hold: true            # after reaching the IK goal, average FT for tare_duration and zero the payload baseline
   tare_duration: 2.0            # [s] FT averaging window in the TARE state (entered once after the move completes)
