@@ -22,6 +22,7 @@ import numpy as np
 from core.state_machine import JointMoveStateMachine
 from core.controller import JointPDController
 from core.ft_processor import FTProcessor
+from core.ft_world import FTWorldRotator
 from core.payload_gravity import PayloadGravityCompensator
 from core.safety import saturate_torque_rate
 from sensors.ft_ros import FTRosSource
@@ -62,6 +63,7 @@ class FrankaBackend:
         # Core pipeline — created in initialize_core_pipeline()
         self._ft_source:        FTRosSource | FTShmSource | None = None
         self._ft_processor:     FTProcessor               | None = None
+        self._ft_rotator:       FTWorldRotator            | None = None
         self._state_machine:    JointMoveStateMachine     | None = None
         self._joint_controller: JointPDController         | None = None
         self._payload_comp:     PayloadGravityCompensator | None = None
@@ -183,6 +185,18 @@ class FrankaBackend:
             lowpass_alpha=float(ft_cfg.get("lowpass_alpha", 1.0)),
         )
 
+        # ---- FT world-frame rotation (output_frame: world) ------------
+        # The real sensor reports in its own (wrist-fixed) frame.  Rotating
+        # each sample into world frame BEFORE the processor/tare keeps the
+        # payload tare valid as the wrist re-orients during post-tare motion.
+        # Sim already does this in FTMuJoCo; this brings real to parity.
+        if str(ft_cfg.get("output_frame", "sensor")).lower() == "world":
+            site = ft_cfg.get("site_name", "ft_sensor_site")
+            self._ft_rotator = FTWorldRotator(ik_model, site)
+            print(f"FT world-frame rotation enabled (site '{site}').")
+        else:
+            print("FT world-frame rotation disabled (output_frame != world).")
+
         # ---- State machine (IK + Enter-waiter thread) -----------------
         # Pass the FT processor so the machine can auto-tare the payload
         # baseline once it reaches the IK goal (TARE state).
@@ -265,7 +279,12 @@ class FrankaBackend:
         self._t_control += dt
 
         # ---- FT: read latest cached sample every tick ----------------
-        raw_ft           = self._ft_source.get_latest()
+        raw_ft = self._ft_source.get_latest()
+        # Rotate sensor-frame wrench -> world frame at the current q, BEFORE
+        # the processor and before the state machine's TARE consumes it, so the
+        # tare baseline and every downstream reading share one fixed frame.
+        if self._ft_rotator is not None:
+            raw_ft = self._ft_rotator.to_world(q, raw_ft)
         processed_wrench = self._ft_processor.process(raw_ft.wrench)
 
         # ---- Debug: FT heartbeat every 0.1 s (10 Hz), gated by config -

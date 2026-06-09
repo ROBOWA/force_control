@@ -21,7 +21,8 @@ ft:
                                # "ros": subscribe in-process (starved to ~45 Hz by the RT loop)
   shm_path: /dev/shm/ft_wrench # shared-memory buffer written by scripts/ft_node.py
   topic: /ft_sensor/wrench     # used by ft_node (and by source=ros)
-  output_frame: world
+  output_frame: world          # "world": rotate sensor wrench into world frame each tick via MuJoCo FK; "sensor": leave in wrist frame
+  site_name: ft_sensor_site    # MuJoCo site whose frame the FT sensor reports in (used for the world-frame rotation)
   sign: 1.0
   tare_on_approach: true
   tare_on_hold: true            # after reaching the IK goal, average FT for tare_duration and zero the payload baseline
