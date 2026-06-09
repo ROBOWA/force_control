@@ -77,8 +77,9 @@ ft:
   tare_duration: 2.0            # [s] FT averaging window in the TARE state (entered once after the move completes)
   lowpass_alpha: 1.0            # 1.0 = no filtering; reduce for hardware noise
 
-# Logging
+# Logging — per-tick CSV of tip position (xyz), tip velocity (xyz), Fz, phase
 logging:
   enabled: true
   output_dir: data/logs
   prefix: sim
+  capacity: 1500000            # max rows preallocated; logging stops when full

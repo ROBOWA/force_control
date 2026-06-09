@@ -19,11 +19,12 @@ from __future__ import annotations
 import time
 import numpy as np
 
-from core.state_machine import JointMoveStateMachine
+from core.state_machine import JointMoveStateMachine, JointMoveState
 from core.controller import JointPDController, CartesianImpedanceController
 from core.ft_processor import FTProcessor
 from core.ft_world import FTWorldRotator
 from core.kinematics import SiteKinematics
+from core.data_logger import TrajectoryLogger
 from core.payload_gravity import PayloadGravityCompensator
 from core.safety import saturate_torque_rate
 from sensors.ft_ros import FTRosSource
@@ -70,6 +71,7 @@ class FrankaBackend:
         self._cart_controller:  CartesianImpedanceController | None = None
         self._tip_kin:          SiteKinematics            | None = None
         self._payload_comp:     PayloadGravityCompensator | None = None
+        self._logger:           TrajectoryLogger          | None = None
 
         # Pre-read robot state (captured in connect())
         self._q_initial: np.ndarray = np.zeros(7)
@@ -235,6 +237,17 @@ class FrankaBackend:
         )
         self._max_torque_rate = float(safety_cfg.get("max_torque_rate", 1.0))
 
+        # ---- Trajectory logging (tip x, v, Fz, phase per tick) --------
+        log_cfg = self._cfg.get("logging", {})
+        if log_cfg.get("enabled", False):
+            self._logger = TrajectoryLogger(
+                output_dir=log_cfg.get("output_dir", "data/logs"),
+                prefix=log_cfg.get("prefix", "real"),
+                capacity=int(log_cfg.get("capacity", 1_500_000)),
+                phase_names={s.value: s.name for s in JointMoveState},
+            )
+            print(f"Trajectory logging enabled -> {log_cfg.get('output_dir', 'data/logs')}")
+
         print("Core pipeline ready. Entering torque control…")
 
     def start_outer_loop(self) -> None:
@@ -264,6 +277,10 @@ class FrankaBackend:
             self._robot.control_torques(self._torque_callback)
         except KeyboardInterrupt:
             print("\nInterrupted.")
+        finally:
+            # Flush the trajectory log once the RT loop has stopped.
+            if self._logger is not None:
+                self._logger.save()
 
     def stop(self) -> None:
         """Stop the FT background thread (safe to call from any thread)."""
@@ -350,6 +367,13 @@ class FrankaBackend:
             x_current=x_tip,
             R_current=R_tip,
         )
+
+        # ---- Trajectory log: tip x, v, Fz (world), phase --------------
+        if self._logger is not None:
+            self._logger.log(
+                self._t_control, x_tip, v_tip,
+                processed_wrench[2], self._state_machine.state.value,
+            )
 
         # ---- Task torque: joint PD or Cartesian impedance ------------
         if cmd.mode == "cartesian":

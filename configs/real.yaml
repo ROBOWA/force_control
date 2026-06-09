@@ -61,12 +61,12 @@ safety:
 # ControllerCore (future — Cartesian impedance, not used in Milestone 1)
 controller:
   max_torque_rate: 1.0
-  null_stiffness: 10.0
+  null_stiffness: 1.0
   null_q_d: [0.0, -0.3, 0.0, -1.8, 0.0, 1.5, 0.0]
-  K: [200.0, 200.0, 200.0, 10.0, 10.0, 10.0]
-  D: [30.0,  30.0,  30.0,  3.0,  3.0,  3.0]
-  force_pi_kp: 0.0005
-  force_pi_ki: 0.00005
+  K: [1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0]
+  D: [100.0, 100.0,  100.0,  3.0,  3.0,  3.0]
+  force_pi_kp: 0.002
+  force_pi_ki: 0.0002
   force_pi_max: 3.0
   target_stale_ms: 10.0
   ft_stale_ms: 15.0
@@ -75,7 +75,7 @@ controller:
 state_machine:
   # --- Milestone 2: post-tare Cartesian approach + z-force hold ---
   approach_enabled: true        # false → stop at HOLD after the tare (Milestone-1 behavior)
-  approach_speed: 0.002         # [m/s] constant world -Z descent speed
+  approach_speed: 0.005         # [m/s] constant world -Z descent speed
   contact_fz_threshold: 2.0     # [N] +Fz (compression) level that counts as contact
   contact_confirm_samples: 5    # consecutive ticks above threshold before switching to force hold
   F_normal_desired: 2.0         # [N] target normal force held during FORCE_HOLD
@@ -98,4 +98,5 @@ logging:
   enabled: true
   output_dir: data/logs
   prefix: real
+  capacity: 1500000            # max rows preallocated (~25 min at 1 kHz); logging stops when full
   print_stats_hz: 1.0

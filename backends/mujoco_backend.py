@@ -9,10 +9,11 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 
-from core.state_machine import JointMoveStateMachine
+from core.state_machine import JointMoveStateMachine, JointMoveState
 from core.controller import JointPDController, CartesianImpedanceController
 from core.ft_processor import FTProcessor
 from core.kinematics import SiteKinematics
+from core.data_logger import TrajectoryLogger
 from core.payload_gravity import PayloadGravityCompensator
 from sensors.ft_mujoco import FTMuJoCo
 
@@ -48,6 +49,7 @@ class MuJoCoBackend:
         self._ft_source:     FTMuJoCo                   | None = None
         self._ft_processor:  FTProcessor                | None = None
         self._payload_comp:  PayloadGravityCompensator  | None = None
+        self._logger:        TrajectoryLogger           | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -106,6 +108,17 @@ class MuJoCoBackend:
             self._payload_comp = PayloadGravityCompensator(self._cfg)
             print("Payload gravity compensator loaded.")
 
+        # ---- Trajectory logging (tip x, v, Fz, phase per tick) ----------
+        log_cfg = self._cfg.get("logging", {})
+        if log_cfg.get("enabled", False):
+            self._logger = TrajectoryLogger(
+                output_dir=log_cfg.get("output_dir", "data/logs"),
+                prefix=log_cfg.get("prefix", "sim"),
+                capacity=int(log_cfg.get("capacity", 1_500_000)),
+                phase_names={s.value: s.name for s in JointMoveState},
+            )
+            print(f"Trajectory logging enabled -> {log_cfg.get('output_dir', 'data/logs')}")
+
         # start() solves IK synchronously and launches the Enter-waiter thread.
         self._state_machine.start(self._model, self._data)
 
@@ -149,6 +162,13 @@ class MuJoCoBackend:
                     R_current=R_tip,
                 )
 
+                # ---- Trajectory log: tip x, v, Fz (world), phase ----------------
+                if self._logger is not None:
+                    self._logger.log(
+                        self._data.time, x_tip, v_tip,
+                        processed_wrench[2], self._state_machine.state.value,
+                    )
+
                 if cmd.mode == "failed":
                     # State machine reached FAILED — stop cleanly.
                     break
@@ -189,3 +209,7 @@ class MuJoCoBackend:
 
                 mujoco.mj_step(self._model, self._data)
                 viewer.sync()
+
+        # Flush the trajectory log once the viewer/loop has stopped.
+        if self._logger is not None:
+            self._logger.save()
