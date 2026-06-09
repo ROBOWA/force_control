@@ -56,13 +56,40 @@ state_machine:
   max_depth: 0.05               # [m] z_ref may not go below z_contact - max_depth
   retract_allowance: 0.01       # [m] z_ref may not rise above z_contact + retract_allowance
 
-  # --- Future: contact/slide/lift phases (unused in Milestone 2) ---
+  # --- Future: contact/lift phases (unused) ---
   settle_duration: 0.5          # [s]
-  slide_speed: 0.003            # [m/s]
-  slide_distance: 0.05          # [m]
   lift_height: 0.05             # [m]
   lift_speed: 0.01              # [m/s]
   target_z_contact: 0.01        # [m] approximate surface z in base frame
+
+# Milestone 3: z-force hold parameters (static, at the contact point)
+force_hold:
+  desired_fz: 3.0               # [N] +Fz = compression
+  kp_f: 0.0005                  # [m/s per N]
+  kd_f: 0.0                     # [m per N]
+  max_z_speed: 0.0015           # [m/s] clamp on z_ref velocity
+  max_depth: 0.05               # [m] z_ref floor = z_contact - max_depth
+  retract_allowance: 0.01       # [m] z_ref ceiling = z_contact + retract_allowance
+
+# Milestone 3: user-triggered slide (z force-hold + xy slide trajectory)
+slide:
+  enabled: true                 # false → stay in FORCE_HOLD (no slide offered)
+  force:                        # z-force gains DURING the slide (separate from force_hold)
+    desired_fz: 3.0
+    kp_f: 0.0008
+    kd_f: 0.00005
+    max_z_speed: 0.0025
+    max_depth: 0.05
+    retract_allowance: 0.01
+  motion:
+    direction_xy: [1.0, 0.0]    # world-frame xy slide direction (auto-normalized)
+    speed: 0.003                # [m/s] constant slide speed after the ramp
+    ramp_time: 1.0              # [s] min-jerk ramp up to speed
+    distance: 0.05              # [m] slide this far, then hold (safety cap)
+  tangential:
+    ki_vel_s: 20.0              # integral gain on tangential velocity error
+    vel_int_limit_s: 0.003      # [m/s] clamp on the velocity-correction integral
+    dx_int_gain_s: 1.0          # scale of the integral added to commanded slide velocity
 
 # FT source
 ft:

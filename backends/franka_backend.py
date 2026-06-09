@@ -366,6 +366,7 @@ class FrankaBackend:
             ft_sample=raw_ft,
             x_current=x_tip,
             R_current=R_tip,
+            v_current=v_tip,
         )
 
         # ---- Trajectory log: tip x, v, Fz (world), phase --------------
