@@ -2,11 +2,18 @@
 
 Contains two state machines:
 
-    JointMoveStateMachine   — Milestone 1: joint-space IK + min-jerk move
+    JointMoveStateMachine   — joint-space IK + min-jerk move, FT tare, then a
+                              Cartesian downward approach and z-force hold
+                              (Milestones 1–2)
     StateMachine            — future: Cartesian contact/force/slide phases
 
+update() returns a ControlCommand each tick: mode="joint" for the IK-move
+phases, mode="cartesian" (world-frame tip targets) for the approach / force
+hold, mode="failed" on error.
+
 No MuJoCo viewer, pylibfranka, or ROS imports.
-MuJoCo model/data are used only inside JointMoveStateMachine for IK FK calls.
+MuJoCo model/data are used only inside JointMoveStateMachine for IK FK calls;
+the backend supplies the live tip pose for the Cartesian phases.
 """
 
 from __future__ import annotations
@@ -14,7 +21,7 @@ from enum import Enum, auto
 import threading
 import numpy as np
 import mujoco
-from .types import RobotStateLite, WrenchSample, TargetSample
+from .types import RobotStateLite, WrenchSample, TargetSample, ControlCommand
 from .ik import min_jerk, solve_ik_dls, euler_xyz_to_R
 
 
@@ -28,6 +35,9 @@ class JointMoveState(Enum):
     WAIT_USER_CONFIRM = auto()
     MOVE_JOINT       = auto()
     TARE             = auto()   # at the IK goal: average FT for tare_duration, then tare
+    WAIT_APPROACH_CONFIRM = auto()  # at the goal: hold, wait for Enter to start the approach
+    APPROACH         = auto()   # Cartesian: descend along world -Z until contact
+    FORCE_HOLD       = auto()   # Cartesian: regulate Fz by admittance on z_ref
     FAILED           = auto()
 
 
@@ -38,10 +48,12 @@ class JointMoveStateMachine:
 
         sm = JointMoveStateMachine(config)
         sm.start(model, data)          # synchronous IK + launches Enter-waiter thread
-        # then in the sim loop:
-        q_des, dq_des = sm.update(t, q)
-        if q_des is None:
-            break                      # FAILED state — stop sim loop
+        # then in the control loop:
+        cmd = sm.update(t, q, dq_current=dq, wrench=processed_wrench,
+                        ft_sample=raw_ft, x_current=x_tip, R_current=R_tip)
+        if cmd.mode == "failed":
+            break                      # FAILED state — stop the loop
+        # dispatch cmd.mode in ("joint", "cartesian") to the right controller
     """
 
     def __init__(self, config: dict, ft_processor=None):
@@ -79,6 +91,41 @@ class JointMoveStateMachine:
         self._tare_count    = 0
         self._tare_last_seq = None          # dedup: only accumulate fresh samples
 
+        # ---- Cartesian approach + force-hold (Milestone 2) ------------------
+        sm_cfg = config.get("state_machine", {})
+        # When false, the machine stops at HOLD after the tare (Milestone-1 behavior).
+        self._approach_enabled = bool(sm_cfg.get("approach_enabled", True))
+
+        # APPROACH: open-loop descent along world -Z until contact.
+        self._approach_speed   = float(sm_cfg.get("approach_speed", 0.002))     # [m/s]
+        self._contact_fz       = float(sm_cfg.get("contact_fz_threshold", 2.0)) # [N]
+        self._contact_confirm  = int(sm_cfg.get("contact_confirm_samples", 5))
+
+        # FORCE_HOLD: admittance outer loop, Fz -> z_ref velocity.
+        self._F_des            = float(sm_cfg.get("F_normal_desired", 2.0))     # [N]
+        self._force_kp         = float(sm_cfg.get("force_kp", 5e-4))            # [m/s per N]
+        self._force_kd         = float(sm_cfg.get("force_kd", 0.0))            # [m per N]
+        self._max_hold_speed   = float(sm_cfg.get("max_force_hold_speed", 0.01))# [m/s]
+        self._max_depth        = float(sm_cfg.get("max_depth", 0.05))          # [m]
+        self._retract_allow    = float(sm_cfg.get("retract_allowance", 0.01))  # [m]
+
+        # Cartesian reference state (captured at approach start).
+        self.x_anchor:  float = 0.0
+        self.y_anchor:  float = 0.0
+        self.z_ref:     float = 0.0
+        self.z_contact: float = 0.0
+        self.R_anchor:  np.ndarray | None = None
+        self._contact_count = 0
+        self._force_e_prev  = 0.0
+        self._z_dot         = 0.0
+
+        # dt tracking for the force loop / z_ref integration.
+        self._t_prev: float | None = None
+
+        # Second Enter-waiter (before the approach).
+        self._approach_pressed  = threading.Event()
+        self._approach_thread: threading.Thread | None = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -105,19 +152,33 @@ class JointMoveStateMachine:
         dq_current: np.ndarray | None = None,
         wrench: np.ndarray | None = None,
         ft_sample: WrenchSample | None = None,
+        x_current: np.ndarray | None = None,
+        R_current: np.ndarray | None = None,
         **_,
-    ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Return (q_des, dq_des) for the current control tick.
+    ) -> ControlCommand:
+        """Return the ControlCommand for the current control tick.
 
-        ft_sample (raw WrenchSample) is consumed only in the TARE state to
-        average the payload baseline; wrench/dq_current are accepted for
-        forward-compatibility with future contact phases.
+        Joint phases (HOLD, WAIT_USER_CONFIRM, MOVE_JOINT, TARE,
+        WAIT_APPROACH_CONFIRM) return mode="joint" with q_des/dq_des.  The
+        Cartesian phases (APPROACH, FORCE_HOLD) return mode="cartesian" with
+        world-frame tip targets.  FAILED returns mode="failed".
 
-        Returns (None, None) when the state machine has FAILED — the backend
-        should break the simulation loop immediately.
+        Inputs:
+            wrench:     processed world-frame wrench (tared); Fz = wrench[2],
+                        with the convention +Fz = compression/contact force.
+            ft_sample:  raw WrenchSample, consumed only in TARE for averaging.
+            x_current:  current tip world position (3,) — used to anchor the
+                        Cartesian phases at approach start.
+            R_current:  current tip world orientation (3,3) — held through the
+                        approach / force hold.
         """
+        dt = (t - self._t_prev) if self._t_prev is not None else 1e-3
+        if dt <= 0.0:
+            dt = 1e-3
+        self._t_prev = t
+
         if self.state == JointMoveState.HOLD:
-            return self.q_hold.copy(), np.zeros(7)
+            return self._joint_cmd(self.q_hold.copy(), np.zeros(7))
 
         if self.state == JointMoveState.WAIT_USER_CONFIRM:
             if self._enter_pressed.is_set():
@@ -127,7 +188,7 @@ class JointMoveStateMachine:
                 self.state           = JointMoveState.MOVE_JOINT
                 print("Starting movement...")
             # Hold for this tick whether or not we just transitioned.
-            return self.q_hold.copy(), np.zeros(7)
+            return self._joint_cmd(self.q_hold.copy(), np.zeros(7))
 
         if self.state == JointMoveState.MOVE_JOINT:
             t_elapsed = t - self.move_start_time
@@ -135,15 +196,13 @@ class JointMoveStateMachine:
                 s, ds  = min_jerk(t_elapsed, self.move_time)
                 q_des  = self.q_start + s  * (self.q_goal - self.q_start)
                 dq_des = ds * (self.q_goal - self.q_start)
-                return q_des, dq_des
+                return self._joint_cmd(q_des, dq_des)
+            self.q_hold = self.q_goal.copy()
+            if self._tare_enabled:
+                self._begin_tare(t)
             else:
-                self.q_hold = self.q_goal.copy()
-                if self._tare_enabled:
-                    self._begin_tare(t)
-                else:
-                    self.state = JointMoveState.HOLD
-                    print("Reached HOLD")
-                return self.q_hold.copy(), np.zeros(7)
+                self._after_goal_reached()
+            return self._joint_cmd(self.q_hold.copy(), np.zeros(7))
 
         if self.state == JointMoveState.TARE:
             # Hold the goal pose and average fresh, valid FT samples. When the
@@ -156,13 +215,147 @@ class JointMoveStateMachine:
                     self._tare_last_seq = ft_sample.seq
             if (t - self._tare_t0) >= self._tare_duration:
                 self._finish_tare()
-            return self.q_hold.copy(), np.zeros(7)
+            return self._joint_cmd(self.q_hold.copy(), np.zeros(7))
+
+        if self.state == JointMoveState.WAIT_APPROACH_CONFIRM:
+            if self._approach_pressed.is_set():
+                self._begin_approach(x_current, R_current)
+                if self.state == JointMoveState.FAILED:
+                    return self._failed_cmd()
+                # First Cartesian tick: hold the just-captured anchor pose.
+                return self._cart_hold_cmd()
+            # Keep holding the goal joint pose while waiting for Enter.
+            return self._joint_cmd(self.q_hold.copy(), np.zeros(7))
+
+        if self.state == JointMoveState.APPROACH:
+            return self._update_approach(dt, wrench)
+
+        if self.state == JointMoveState.FORCE_HOLD:
+            return self._update_force_hold(dt, wrench)
 
         if self.state == JointMoveState.FAILED:
-            return self.q_hold.copy(), np.zeros(7)
+            return self._failed_cmd()
 
         # SOLVING_IK is synchronous — update() should never see this.
-        return self.q_hold.copy(), np.zeros(7)
+        return self._joint_cmd(self.q_hold.copy(), np.zeros(7))
+
+    # ------------------------------------------------------------------
+    # Command builders
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _joint_cmd(q_des: np.ndarray, dq_des: np.ndarray) -> ControlCommand:
+        return ControlCommand(mode="joint", q_des=q_des, dq_des=dq_des)
+
+    def _cart_cmd(self, x_des: np.ndarray, dx_des: np.ndarray) -> ControlCommand:
+        """Cartesian command holding the anchor orientation (w_des = 0)."""
+        return ControlCommand(
+            mode="cartesian",
+            x_des=x_des,
+            dx_des=dx_des,
+            R_des=self.R_anchor.copy(),
+            w_des=np.zeros(3),
+        )
+
+    def _cart_hold_cmd(self) -> ControlCommand:
+        return self._cart_cmd(self._x_des(), np.zeros(3))
+
+    @staticmethod
+    def _failed_cmd() -> ControlCommand:
+        return ControlCommand(mode="failed")
+
+    def _x_des(self) -> np.ndarray:
+        """Current Cartesian position reference: anchored xy, live z_ref."""
+        return np.array([self.x_anchor, self.y_anchor, self.z_ref])
+
+    # ------------------------------------------------------------------
+    # Cartesian approach + force hold (Milestone 2)
+    # ------------------------------------------------------------------
+
+    def _after_goal_reached(self) -> None:
+        """Branch taken once the goal pose is reached (post-move / post-tare)."""
+        if self._approach_enabled:
+            self._begin_wait_approach()
+        else:
+            self.state = JointMoveState.HOLD
+            print("Reached HOLD")
+
+    def _begin_wait_approach(self) -> None:
+        """Enter WAIT_APPROACH_CONFIRM and launch the approach Enter-waiter."""
+        self.state = JointMoveState.WAIT_APPROACH_CONFIRM
+        self._approach_pressed.clear()
+        self._approach_thread = threading.Thread(
+            target=self._wait_for_enter_approach, daemon=True
+        )
+        self._approach_thread.start()
+        print("At goal pose (FT tared). Press Enter to begin the downward approach...")
+
+    def _wait_for_enter_approach(self) -> None:
+        input("\nReady. Press Enter to descend along world -Z...")
+        self._approach_pressed.set()
+
+    def _begin_approach(self, x_current, R_current) -> None:
+        """Capture the Cartesian anchor pose and start the descent."""
+        if x_current is None or R_current is None:
+            print("ERROR: no tip pose supplied to start the approach. State → FAILED.")
+            self.state = JointMoveState.FAILED
+            return
+        self.x_anchor = float(x_current[0])
+        self.y_anchor = float(x_current[1])
+        self.z_ref    = float(x_current[2])
+        self.R_anchor = np.asarray(R_current, dtype=float).copy()
+        self._contact_count = 0
+        self._z_dot = 0.0
+        self.state = JointMoveState.APPROACH
+        print(f"Approach anchor: x={self.x_anchor:+.4f} y={self.y_anchor:+.4f} "
+              f"z={self.z_ref:+.4f}; descending at {self._approach_speed * 1e3:.1f} mm/s "
+              f"(contact when Fz ≥ {self._contact_fz:.1f} N x{self._contact_confirm}).")
+
+    def _update_approach(self, dt: float, wrench) -> ControlCommand:
+        """Descend along world -Z at constant speed; detect contact on Fz."""
+        Fz = float(wrench[2]) if wrench is not None else 0.0
+
+        # Contact detection (debounced) at the current depth, before stepping.
+        if Fz >= self._contact_fz:
+            self._contact_count += 1
+        else:
+            self._contact_count = 0
+
+        if self._contact_count >= self._contact_confirm:
+            self.z_contact = self.z_ref
+            self._force_e_prev = Fz - self._F_des
+            self._z_dot = 0.0
+            self.state = JointMoveState.FORCE_HOLD
+            print(f"Contact (Fz={Fz:+.2f} N, z_contact={self.z_contact:+.4f} m). "
+                  f"→ force hold, F_des={self._F_des:.1f} N.")
+            # Hold this depth for the transition tick; force loop starts next.
+            return self._cart_cmd(self._x_des(), np.zeros(3))
+
+        # No contact yet: open-loop step down.
+        self.z_ref -= self._approach_speed * dt
+        dx_des = np.array([0.0, 0.0, -self._approach_speed])
+        return self._cart_cmd(self._x_des(), dx_des)
+
+    def _update_force_hold(self, dt: float, wrench) -> ControlCommand:
+        """Admittance: regulate Fz to F_des by driving z_ref velocity."""
+        Fz = float(wrench[2]) if wrench is not None else 0.0
+        e = Fz - self._F_des
+
+        # +e (too much force) → z_dot > 0 (retract); -e → descend. See spec.
+        z_dot = self._force_kp * e + self._force_kd * (e - self._force_e_prev) / dt
+        z_dot = float(np.clip(z_dot, -self._max_hold_speed, self._max_hold_speed))
+
+        self.z_ref += z_dot * dt
+        # Safety clamp relative to the depth at first contact.
+        z_lo = self.z_contact - self._max_depth
+        z_hi = self.z_contact + self._retract_allow
+        self.z_ref = float(np.clip(self.z_ref, z_lo, z_hi))
+
+        self._force_e_prev = e
+        self._z_dot = z_dot
+
+        dx_des = np.array([0.0, 0.0, z_dot])
+        return self._cart_cmd(self._x_des(), dx_des)
 
     # ------------------------------------------------------------------
     # Payload FT auto-tare (entered once after MOVE_JOINT completes)
@@ -179,7 +372,7 @@ class JointMoveStateMachine:
               "to tare the payload baseline (keep the tool free of contact)...")
 
     def _finish_tare(self) -> None:
-        """Average the recorded samples, tare the processor, enter HOLD."""
+        """Average the recorded samples, tare the processor, then advance."""
         if self._tare_count > 0:
             mean_raw = self._tare_sum / self._tare_count
             self._ft_processor.tare(mean_raw)
@@ -189,8 +382,7 @@ class JointMoveStateMachine:
         else:
             print("⚠️  No valid FT samples during the tare window — "
                   "baseline NOT tared (check the FT source).")
-        self.state = JointMoveState.HOLD
-        print("Reached HOLD")
+        self._after_goal_reached()
 
     # ------------------------------------------------------------------
     # IK (synchronous, called from start())

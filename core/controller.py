@@ -126,6 +126,78 @@ class ControllerCore:
 
 
 # ---------------------------------------------------------------------------
+# Orientation error (pure numpy — keeps this module MuJoCo-free)
+# ---------------------------------------------------------------------------
+
+def orientation_error(R_des: np.ndarray, R: np.ndarray) -> np.ndarray:
+    """Small-angle world-frame orientation error between two rotations.
+
+    Returns 0.5 * vee(R_des R^T - (R_des R^T)^T), the standard sin(theta)*axis
+    approximation expressed in the world frame — consistent with a world-frame
+    rotational Jacobian (mj_jacSite) and the convention used by solve_ik_dls.
+    """
+    Re = R_des @ R.T
+    return 0.5 * np.array([
+        Re[2, 1] - Re[1, 2],
+        Re[0, 2] - Re[2, 0],
+        Re[1, 0] - Re[0, 1],
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Milestone 2: Cartesian impedance controller (tip task wrench -> joint torque)
+# ---------------------------------------------------------------------------
+
+class CartesianImpedanceController:
+    """Stateless diagonal Cartesian impedance controller.
+
+    Computes a task wrench from pose/velocity error and maps it to joint
+    torques through the transpose Jacobian::
+
+        F   = Kp_pos * (x_des - x)  + Kd_pos * (dx_des - v)
+        T   = Kp_ori * e_ori        + Kd_ori * (w_des - w)
+        tau = J.T @ [F, T]
+
+    It adds NO gravity/coriolis term — the backend supplies arm gravity (sim:
+    G_zero / libfranka on hardware) and payload-gravity compensation
+    separately, exactly as in the joint-PD path.
+    """
+
+    def __init__(self, config: dict):
+        """
+        Args:
+            config: controller dict with 6-vectors K and D ordered
+                    [x, y, z, rx, ry, rz]; split into translational (first 3)
+                    and rotational (last 3) diagonal gains.
+        """
+        K = np.asarray(config["K"], dtype=float)
+        D = np.asarray(config["D"], dtype=float)
+        if K.shape != (6,) or D.shape != (6,):
+            raise ValueError("controller.K and controller.D must each be length 6")
+        self.Kp_pos, self.Kp_ori = K[:3], K[3:]
+        self.Kd_pos, self.Kd_ori = D[:3], D[3:]
+
+    def compute(
+        self,
+        x:      np.ndarray,   # (3,) current tip position [m]
+        R:      np.ndarray,   # (3,3) current tip orientation
+        v:      np.ndarray,   # (3,) current tip linear velocity [m/s]
+        w:      np.ndarray,   # (3,) current tip angular velocity [rad/s]
+        J:      np.ndarray,   # (6,7) world-frame tip Jacobian
+        x_des:  np.ndarray,   # (3,) desired tip position [m]
+        dx_des: np.ndarray,   # (3,) desired tip linear velocity [m/s]
+        R_des:  np.ndarray,   # (3,3) desired tip orientation
+        w_des:  np.ndarray,   # (3,) desired tip angular velocity [rad/s]
+    ) -> np.ndarray:
+        """Return joint torque command, shape (7,) [Nm]."""
+        e_pos = x_des - x
+        e_ori = orientation_error(R_des, R)
+        F = self.Kp_pos * e_pos + self.Kd_pos * (dx_des - v)
+        T = self.Kp_ori * e_ori + self.Kd_ori * (w_des - w)
+        return J.T @ np.concatenate([F, T])
+
+
+# ---------------------------------------------------------------------------
 # Milestone 1: joint-space PD controller
 # ---------------------------------------------------------------------------
 

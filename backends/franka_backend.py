@@ -20,9 +20,10 @@ import time
 import numpy as np
 
 from core.state_machine import JointMoveStateMachine
-from core.controller import JointPDController
+from core.controller import JointPDController, CartesianImpedanceController
 from core.ft_processor import FTProcessor
 from core.ft_world import FTWorldRotator
+from core.kinematics import SiteKinematics
 from core.payload_gravity import PayloadGravityCompensator
 from core.safety import saturate_torque_rate
 from sensors.ft_ros import FTRosSource
@@ -66,6 +67,8 @@ class FrankaBackend:
         self._ft_rotator:       FTWorldRotator            | None = None
         self._state_machine:    JointMoveStateMachine     | None = None
         self._joint_controller: JointPDController         | None = None
+        self._cart_controller:  CartesianImpedanceController | None = None
+        self._tip_kin:          SiteKinematics            | None = None
         self._payload_comp:     PayloadGravityCompensator | None = None
 
         # Pre-read robot state (captured in connect())
@@ -208,6 +211,14 @@ class FrankaBackend:
         # ---- Joint PD controller --------------------------------------
         self._joint_controller = JointPDController(self._cfg["joint_pd"])
 
+        # ---- Cartesian impedance controller + tip kinematics ----------
+        # Used by the post-tare APPROACH / FORCE_HOLD phases.  The controlled
+        # tip is the IK site (stick_tip); its world pose/Jacobian come from
+        # MuJoCo FK on the measured q, same as the FT world-frame rotation.
+        self._cart_controller = CartesianImpedanceController(self._cfg["controller"])
+        self._tip_kin = SiteKinematics(ik_model, ik_cfg["site_name"])
+        print(f"Cartesian controller ready (tip site '{ik_cfg['site_name']}').")
+
         # ---- Payload gravity compensation -----------------------------
         pg_cfg = self._cfg.get("payload_gravity", {})
         if pg_cfg.get("enabled", False):
@@ -308,7 +319,7 @@ class FrankaBackend:
                     self._ft_prev_t = raw_ft.t
 
             now_dbg = time.perf_counter()
-            if now_dbg - self._last_ft_print_t >= 0.1:
+            if now_dbg - self._last_ft_print_t >= 1:
                 dt = now_dbg - self._last_ft_print_t
                 hz_seq = (self._ft_seq_count - self._ft_seq_at_print) / dt if dt > 0 else 0.0
                 hz_t = (self._ft_t_count - self._ft_t_at_print) / dt if dt > 0 else 0.0
@@ -324,22 +335,35 @@ class FrankaBackend:
                     f"T(tared)=[{w[3]:+7.2f} {w[4]:+7.2f} {w[5]:+7.2f}]"
                 )
 
+        # ---- Tip kinematics (world pose / Jacobian / velocity) -------
+        # Anchors the Cartesian phases and drives the impedance law; FK from
+        # the measured q, same source as the FT world-frame rotation.
+        x_tip, R_tip, J_tip, v_tip, w_tip = self._tip_kin.compute(q, dq)
+
         # ---- State machine -------------------------------------------
-        q_des, dq_des = self._state_machine.update(
+        cmd = self._state_machine.update(
             t=self._t_control,
             q_current=q,
             dq_current=dq,
             wrench=processed_wrench,
             ft_sample=raw_ft,
+            x_current=x_tip,
+            R_current=R_tip,
         )
 
-        # FAILED state: hold current pose safely
-        if q_des is None:
-            q_des  = q.copy()
-            dq_des = np.zeros(7)
-
-        # ---- Joint PD torque -----------------------------------------
-        tau_joint_pd = self._joint_controller.compute(q, dq, q_des, dq_des)
+        # ---- Task torque: joint PD or Cartesian impedance ------------
+        if cmd.mode == "cartesian":
+            tau_task = self._cart_controller.compute(
+                x_tip, R_tip, v_tip, w_tip, J_tip,
+                cmd.x_des, cmd.dx_des, cmd.R_des, cmd.w_des,
+            )
+        else:
+            # "joint" tracks the command; "failed" holds the current pose.
+            if cmd.mode == "failed":
+                q_des, dq_des = q.copy(), np.zeros(7)
+            else:
+                q_des, dq_des = cmd.q_des, cmd.dq_des
+            tau_task = self._joint_controller.compute(q, dq, q_des, dq_des)
 
         # ---- Payload gravity (delta only) ----------------------------
         # Franka firmware already compensates arm gravity internally.
@@ -349,7 +373,7 @@ class FrankaBackend:
         else:
             tau_payload = np.zeros(7)
 
-        tau_cmd = tau_joint_pd + tau_payload
+        tau_cmd = tau_task + tau_payload
 
         # ---- Safety: clip then rate-limit ----------------------------
         tau_cmd = np.clip(tau_cmd, -self._max_torque, self._max_torque)

@@ -10,8 +10,9 @@ import mujoco
 import mujoco.viewer
 
 from core.state_machine import JointMoveStateMachine
-from core.controller import JointPDController
+from core.controller import JointPDController, CartesianImpedanceController
 from core.ft_processor import FTProcessor
+from core.kinematics import SiteKinematics
 from core.payload_gravity import PayloadGravityCompensator
 from sensors.ft_mujoco import FTMuJoCo
 
@@ -42,6 +43,8 @@ class MuJoCoBackend:
         self._data:          mujoco.MjData              | None = None
         self._state_machine: JointMoveStateMachine      | None = None
         self._controller:    JointPDController          | None = None
+        self._cart_controller: CartesianImpedanceController | None = None
+        self._tip_kin:       SiteKinematics             | None = None
         self._ft_source:     FTMuJoCo                   | None = None
         self._ft_processor:  FTProcessor                | None = None
         self._payload_comp:  PayloadGravityCompensator  | None = None
@@ -86,6 +89,12 @@ class MuJoCoBackend:
 
         # ---- Controller + state machine ----------------------------------------
         self._controller    = JointPDController(self._cfg["joint_pd"])
+
+        # Cartesian impedance controller + tip kinematics for the post-tare
+        # APPROACH / FORCE_HOLD phases.  Controlled tip is the IK site.
+        ik_cfg = self._cfg.get("ik", {})
+        self._cart_controller = CartesianImpedanceController(self._cfg["controller"])
+        self._tip_kin = SiteKinematics(self._model, ik_cfg["site_name"])
         # Pass the FT processor so the machine can auto-tare the payload baseline
         # once it reaches the IK goal (TARE state).
         self._state_machine = JointMoveStateMachine(
@@ -126,20 +135,32 @@ class MuJoCoBackend:
                 raw_ft = self._ft_source.get_latest()
                 processed_wrench = self._ft_processor.process(raw_ft.wrench)
 
+                # ---- Tip kinematics (world pose / Jacobian / velocity) ----------
+                x_tip, R_tip, J_tip, v_tip, w_tip = self._tip_kin.compute(q, dq)
+
                 # ---- State machine ----------------------------------------------
-                q_des, dq_des = self._state_machine.update(
+                cmd = self._state_machine.update(
                     t=self._data.time,
                     q_current=q,
                     dq_current=dq,
                     wrench=processed_wrench,
                     ft_sample=raw_ft,
+                    x_current=x_tip,
+                    R_current=R_tip,
                 )
 
-                if q_des is None:
+                if cmd.mode == "failed":
                     # State machine reached FAILED — stop cleanly.
                     break
 
-                tau_joint_pd = self._controller.compute(q, dq, q_des, dq_des)
+                # ---- Task torque: joint PD or Cartesian impedance ---------------
+                if cmd.mode == "cartesian":
+                    tau_task = self._cart_controller.compute(
+                        x_tip, R_tip, v_tip, w_tip, J_tip,
+                        cmd.x_des, cmd.dx_des, cmd.R_des, cmd.w_des,
+                    )
+                else:
+                    tau_task = self._controller.compute(q, dq, cmd.q_des, cmd.dq_des)
 
                 # ---- Gravity / bias compensation --------------------------------
                 #
@@ -161,7 +182,7 @@ class MuJoCoBackend:
                     tau_internal_robot_comp = self._data.qfrc_bias[:7].copy()
                     tau_payload_comp        = np.zeros(7)
 
-                tau_total = tau_internal_robot_comp + tau_joint_pd + tau_payload_comp
+                tau_total = tau_internal_robot_comp + tau_task + tau_payload_comp
 
                 # MuJoCo-specific actuator scaling (see ACTUATOR_GAIN above).
                 self._data.ctrl[:7] = tau_total / ACTUATOR_GAIN

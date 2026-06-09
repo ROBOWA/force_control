@@ -3,6 +3,7 @@
 No MuJoCo, pylibfranka, or ROS imports allowed here.
 """
 
+from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
@@ -25,6 +26,30 @@ class WrenchSample:
     wrench: np.ndarray  # shape (6,) [Fx,Fy,Fz,Tx,Ty,Tz] in control frame [N, Nm]
     seq: int
     valid: bool = True  # False when no data has arrived yet (hardware) or sensor absent
+
+
+@dataclass(frozen=True)
+class ControlCommand:
+    """One control reference emitted by a state machine each tick.
+
+    A command is either joint-space or Cartesian, selected by `mode`:
+
+        "joint"     — track q_des / dq_des with a joint PD controller.
+        "cartesian" — track (x_des, dx_des, R_des, w_des) with a Cartesian
+                      impedance controller (tau = J.T @ wrench).
+        "failed"    — terminal error; the backend should hold safely / stop.
+
+    Only the fields relevant to `mode` are populated; the rest stay None.
+    """
+    mode: str
+    # joint-space targets (mode == "joint")
+    q_des:  np.ndarray | None = None
+    dq_des: np.ndarray | None = None
+    # Cartesian targets (mode == "cartesian"), all world-frame
+    x_des:  np.ndarray | None = None   # (3,) tip position [m]
+    dx_des: np.ndarray | None = None   # (3,) tip linear velocity [m/s]
+    R_des:  np.ndarray | None = None   # (3,3) tip orientation
+    w_des:  np.ndarray | None = None   # (3,) tip angular velocity [rad/s]
 
 
 @dataclass(frozen=True)

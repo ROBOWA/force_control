@@ -44,14 +44,24 @@ controller:
 
 # StateMachine
 state_machine:
-  contact_fz_threshold: 2.0    # [N] Fz magnitude to detect contact
-  approach_speed: 0.005         # [m/s]
+  # --- Milestone 2: post-tare Cartesian approach + z-force hold ---
+  approach_enabled: true        # false → stop at HOLD after the tare (Milestone-1 behavior)
+  approach_speed: 0.005         # [m/s] constant world -Z descent speed
+  contact_fz_threshold: 2.0     # [N] +Fz (compression) level that counts as contact
+  contact_confirm_samples: 5    # consecutive ticks above threshold before switching to force hold
+  F_normal_desired: 3.0         # [N] target normal force held during FORCE_HOLD
+  force_kp: 0.0005              # [m/s per N] admittance: z_dot = kp*e + kd*de/dt
+  force_kd: 0.0                 # [m per N] admittance derivative gain
+  max_force_hold_speed: 0.01    # [m/s] clamp on z_ref velocity during force hold
+  max_depth: 0.05               # [m] z_ref may not go below z_contact - max_depth
+  retract_allowance: 0.01       # [m] z_ref may not rise above z_contact + retract_allowance
+
+  # --- Future: contact/slide/lift phases (unused in Milestone 2) ---
   settle_duration: 0.5          # [s]
   slide_speed: 0.003            # [m/s]
   slide_distance: 0.05          # [m]
   lift_height: 0.05             # [m]
   lift_speed: 0.01              # [m/s]
-  F_normal_desired: 3.0         # [N] desired normal force during sliding
   target_z_contact: 0.01        # [m] approximate surface z in base frame
 
 # FT source
