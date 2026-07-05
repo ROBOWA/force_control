@@ -8,7 +8,7 @@ ik:
   target_pos: [0.5, -0.2, 0.3]    # desired site position in world frame [m]
   move_time: 5.0                  # min-jerk move duration [s]
 
-  target_euler_xyz: [0, 0, 0]   # extra rotation in site body frame; [0,0,0] = keep current orientation
+  target_euler_xyz: [30, 0, 0]   # extra rotation in site body frame; [0,0,0] = keep current orientation
 
 # Payload gravity compensation (full-minus-zero MJCF method)
 payload_gravity:
@@ -85,7 +85,7 @@ slide:
     direction_xy: [0, 1.0]    # world-frame xy slide direction (auto-normalized)
     speed: 0.01                # [m/s] constant slide speed after the ramp
     ramp_time: 1.0              # [s] min-jerk ramp up to speed
-    distance: 0.1              # [m] slide this far, then hold (safety cap)
+    distance: 0.2              # [m] slide this far, then hold (safety cap)
   tangential:
     ki_vel_s: 20.0              # integral gain on tangential velocity error
     vel_int_limit_s: 0.003      # [m/s] clamp on the velocity-correction integral
