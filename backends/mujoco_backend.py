@@ -139,7 +139,7 @@ class MuJoCoBackend:
         try:
             with mujoco.viewer.launch_passive(self._model, self._data) as viewer:
                 # Show coordinate axes for all sites, making the IK target site visible.
-                viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
+                # viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
                 while viewer.is_running():
                     q  = self._data.qpos[:7].copy()
