@@ -19,8 +19,10 @@ import numpy as np
 
 try:
     import matplotlib
-    # Pick a non-interactive backend when there is no display (headless / CI).
-    if not os.environ.get("DISPLAY"):
+    import sys
+    # Force non-interactive backend only on Linux without an X display.
+    # On macOS the native backend works without DISPLAY being set.
+    if sys.platform == "linux" and not os.environ.get("DISPLAY"):
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 except ImportError:  # pragma: no cover

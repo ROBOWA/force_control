@@ -76,16 +76,16 @@ slide:
   enabled: true                 # false → stay in FORCE_HOLD (no slide offered)
   force:                        # z-force gains DURING the slide (separate from force_hold)
     desired_fz: 3.0
-    kp_f: 0.0008
-    kd_f: 0.00005
-    max_z_speed: 0.0025
+    kp_f: 0.05
+    kd_f: 0.005
+    max_z_speed: 0.05
     max_depth: 0.05
     retract_allowance: 0.01
   motion:
-    direction_xy: [1.0, 0.0]    # world-frame xy slide direction (auto-normalized)
-    speed: 0.003                # [m/s] constant slide speed after the ramp
+    direction_xy: [0, 1.0]    # world-frame xy slide direction (auto-normalized)
+    speed: 0.01                # [m/s] constant slide speed after the ramp
     ramp_time: 1.0              # [s] min-jerk ramp up to speed
-    distance: 0.05              # [m] slide this far, then hold (safety cap)
+    distance: 0.1              # [m] slide this far, then hold (safety cap)
   tangential:
     ki_vel_s: 20.0              # integral gain on tangential velocity error
     vel_int_limit_s: 0.003      # [m/s] clamp on the velocity-correction integral

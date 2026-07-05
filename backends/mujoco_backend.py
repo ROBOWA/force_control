@@ -136,81 +136,85 @@ class MuJoCoBackend:
 
     def run(self) -> None:
         """Open passive viewer and run the control loop (blocking)."""
-        with mujoco.viewer.launch_passive(self._model, self._data) as viewer:
-            # Show coordinate axes for all sites, making the IK target site visible.
-            viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
+        try:
+            with mujoco.viewer.launch_passive(self._model, self._data) as viewer:
+                # Show coordinate axes for all sites, making the IK target site visible.
+                viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
-            while viewer.is_running():
-                q  = self._data.qpos[:7].copy()
-                dq = self._data.qvel[:7].copy()
+                while viewer.is_running():
+                    q  = self._data.qpos[:7].copy()
+                    dq = self._data.qvel[:7].copy()
 
-                # ---- FT data: read every tick, regardless of phase --------------
-                raw_ft = self._ft_source.get_latest()
-                processed_wrench = self._ft_processor.process(raw_ft.wrench)
+                    # ---- FT data: read every tick, regardless of phase --------------
+                    raw_ft = self._ft_source.get_latest()
+                    processed_wrench = self._ft_processor.process(raw_ft.wrench)
 
-                # ---- Tip kinematics (world pose / Jacobian / velocity) ----------
-                x_tip, R_tip, J_tip, v_tip, w_tip = self._tip_kin.compute(q, dq)
+                    # ---- Tip kinematics (world pose / Jacobian / velocity) ----------
+                    x_tip, R_tip, J_tip, v_tip, w_tip = self._tip_kin.compute(q, dq)
 
-                # ---- State machine ----------------------------------------------
-                cmd = self._state_machine.update(
-                    t=self._data.time,
-                    q_current=q,
-                    dq_current=dq,
-                    wrench=processed_wrench,
-                    ft_sample=raw_ft,
-                    x_current=x_tip,
-                    R_current=R_tip,
-                    v_current=v_tip,
-                )
-
-                # ---- Trajectory log: tip x, v, Fz (world), phase ----------------
-                if self._logger is not None:
-                    self._logger.log(
-                        self._data.time, x_tip, v_tip,
-                        processed_wrench[2], self._state_machine.state.value,
+                    # ---- State machine ----------------------------------------------
+                    cmd = self._state_machine.update(
+                        t=self._data.time,
+                        q_current=q,
+                        dq_current=dq,
+                        wrench=processed_wrench,
+                        ft_sample=raw_ft,
+                        x_current=x_tip,
+                        R_current=R_tip,
+                        v_current=v_tip,
                     )
 
-                if cmd.mode == "failed":
-                    # State machine reached FAILED — stop cleanly.
-                    break
+                    # ---- Trajectory log: tip x, v, Fz (world), phase ----------------
+                    if self._logger is not None:
+                        self._logger.log(
+                            self._data.time, x_tip, v_tip,
+                            processed_wrench[2], self._state_machine.state.value,
+                        )
 
-                # ---- Task torque: joint PD or Cartesian impedance ---------------
-                if cmd.mode == "cartesian":
-                    tau_task = self._cart_controller.compute(
-                        x_tip, R_tip, v_tip, w_tip, J_tip,
-                        cmd.x_des, cmd.dx_des, cmd.R_des, cmd.w_des,
-                    )
-                else:
-                    tau_task = self._controller.compute(q, dq, cmd.q_des, cmd.dq_des)
+                    if cmd.mode == "failed":
+                        # State machine reached FAILED — stop cleanly.
+                        break
 
-                # ---- Gravity / bias compensation --------------------------------
-                #
-                # With payload compensator enabled:
-                #   tau_internal_robot_comp = G_zero(q)  — arm-only gravity,
-                #       mirrors what libfranka handles internally on real hardware.
-                #   tau_payload_comp = G_full(q) - G_zero(q)  — payload delta only.
-                #   Net: tau_total = G_full(q) + tau_joint_pd, which equals the
-                #       full-payload sim's own qfrc_bias + PD.  No double-counting.
-                #
-                # Without payload compensator (fallback):
-                #   Use live sim's qfrc_bias directly as the full-arm comp,
-                #   payload term stays zero.
-                #
-                if self._payload_comp is not None:
-                    tau_internal_robot_comp = self._payload_comp.gravity_zero(q)
-                    tau_payload_comp        = self._payload_comp.compute(q)
-                else:
-                    tau_internal_robot_comp = self._data.qfrc_bias[:7].copy()
-                    tau_payload_comp        = np.zeros(7)
+                    # ---- Task torque: joint PD or Cartesian impedance ---------------
+                    if cmd.mode == "cartesian":
+                        tau_task = self._cart_controller.compute(
+                            x_tip, R_tip, v_tip, w_tip, J_tip,
+                            cmd.x_des, cmd.dx_des, cmd.R_des, cmd.w_des,
+                        )
+                    else:
+                        tau_task = self._controller.compute(q, dq, cmd.q_des, cmd.dq_des)
 
-                tau_total = tau_internal_robot_comp + tau_task + tau_payload_comp
+                    # ---- Gravity / bias compensation --------------------------------
+                    #
+                    # With payload compensator enabled:
+                    #   tau_internal_robot_comp = G_zero(q)  — arm-only gravity,
+                    #       mirrors what libfranka handles internally on real hardware.
+                    #   tau_payload_comp = G_full(q) - G_zero(q)  — payload delta only.
+                    #   Net: tau_total = G_full(q) + tau_joint_pd, which equals the
+                    #       full-payload sim's own qfrc_bias + PD.  No double-counting.
+                    #
+                    # Without payload compensator (fallback):
+                    #   Use live sim's qfrc_bias directly as the full-arm comp,
+                    #   payload term stays zero.
+                    #
+                    if self._payload_comp is not None:
+                        tau_internal_robot_comp = self._payload_comp.gravity_zero(q)
+                        tau_payload_comp        = self._payload_comp.compute(q)
+                    else:
+                        tau_internal_robot_comp = self._data.qfrc_bias[:7].copy()
+                        tau_payload_comp        = np.zeros(7)
 
-                # MuJoCo-specific actuator scaling (see ACTUATOR_GAIN above).
-                self._data.ctrl[:7] = tau_total / ACTUATOR_GAIN
+                    tau_total = tau_internal_robot_comp + tau_task + tau_payload_comp
 
-                mujoco.mj_step(self._model, self._data)
-                viewer.sync()
+                    # MuJoCo-specific actuator scaling (see ACTUATOR_GAIN above).
+                    self._data.ctrl[:7] = tau_total / ACTUATOR_GAIN
 
-        # Flush the trajectory log once the viewer/loop has stopped.
-        if self._logger is not None:
-            self._logger.save()
+                    mujoco.mj_step(self._model, self._data)
+                    viewer.sync()
+
+        except KeyboardInterrupt:
+            print("\nInterrupted.")
+        finally:
+            # Flush the trajectory log whether the loop ended normally or via Ctrl+C.
+            if self._logger is not None:
+                self._logger.save()
