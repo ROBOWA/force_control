@@ -34,8 +34,8 @@ ft:
 # Payload gravity compensation (full-minus-zero MJCF method)
 payload_gravity:
   enabled: True
-  model_full: franka_emika_panda/panda_impedance.xml   # robot + ft_sensor + stick
-  model_zero: franka_emika_panda/panda_impedance_4.xml   # robot arm only
+  model_full: franka_emika_panda/panda_impedance_tool.xml   # robot + ft_sensor + stick
+  model_zero: franka_emika_panda/panda_impedance_tool_zero_g.xml   # robot arm only
   torque_clip: 15.0                                        # [Nm] per-joint safety clip
 
 # Payload gravity-compensation calibration (scripts/calibrate_payload_gravity.py)
