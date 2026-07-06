@@ -273,7 +273,7 @@ def plot_phase_gantt(data: dict, save_dir: str | None, show: bool, stem: str) ->
         color = _PHASE_COLORS.get(name, "#eeeeee")
         y = y_map[name]
         ax.barh(y, t1 - t0, left=t0, height=0.6, color=color,
-                edgecolor="#555", linewidth=0.5)
+                edgecolor="#555555", linewidth=0.5)
         dur = t1 - t0
         if dur > 0.3:
             ax.text(t0 + dur / 2, y, f"{dur:.1f}s",

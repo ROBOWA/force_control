@@ -93,7 +93,7 @@ state_machine:
 
 # Milestone 3: z-force hold parameters (static, at the contact point)
 force_hold:
-  desired_fz: 2.0               # [N] +Fz = compression
+  desired_fz: 5.0               # [N] +Fz = compression
   kp_f: 0.0005                  # [m/s per N]
   kd_f: 0.0                     # [m per N]
   max_z_speed: 0.0015           # [m/s] clamp on z_ref velocity

@@ -1,0 +1,121 @@
+# Real Franka Panda configuration — FLANGE FT variant (Ubuntu Panda PC).
+#
+# Same experiment as real.yaml, but the contact wrench is the Panda's OWN
+# external-wrench estimate read in the 1 kHz loop (no external FT sensor, no ROS,
+# no shared memory). Run with scripts/run_controller_flange.py.
+
+robot_ip: "172.16.0.2"
+
+# IK: same site/target as sim — model must contain the controlled site
+ik:
+  mjcf: "franka_emika_panda/panda_impedance.xml"
+  site_name: "stick_tip"
+  target_pos: [0.45, -0.2, 0.2]
+  target_euler_xyz: [15.0, 0.0, 0.0]   # 10° tilt about X (was vertical [0,0,0])
+  move_time: 3.0
+
+# Joint-space PD gains (Milestone 1 — same structure as sim)
+joint_pd:
+  kp: [200.0, 200.0, 200.0, 200.0, 80.0, 80.0, 40.0]
+  kd: [ 20.0,  20.0,  20.0,  20.0,  8.0,  8.0,  4.0]
+
+# FT sensor: the Panda's flange external-wrench estimate, read in-loop.
+ft:
+  source: flange              # read the RobotState wrench in the callback (sensors/ft_flange.py)
+  frame: base                 # "base": O_F_ext_hat_K, already in the base/world frame -> Fz = vertical force
+                              # "stiffness": K_F_ext_hat_K, wrist frame (not world-aligned; avoid for this state machine)
+  sign: -1.0                  # This robot reports F_ext in the REACTION convention (hanging tool -> Fz>0),
+                              # so the raw O_F_ext_hat_K is a globally-negated (left-handed) view of the true
+                              # external force. A global -1 negates the whole 3-vector = a reflection (det -1),
+                              # flipping it back to a RIGHT-HANDED frame: +Fx=forward, +Fy=left, +Fz=up, and
+                              # contact -> +Fz. Matches calibrate_payload_gravity_panda_flange.py (fz>0 -> -1).
+  tare_on_hold: true          # after reaching the IK goal, average F_ext for tare_duration and zero the payload baseline
+  tare_duration: 5.0          # [s] FT averaging window in the TARE state
+  debug_print: true           # 1 Hz processed-wrench heartbeat in the control loop; false for timing-sensitive runs
+
+  # --- Noise filter (flange F_ext is torque-derived and NOISY) -------------
+  # Replaces the light EWA used for the Bota stream with a real low-pass.
+  filter:
+    type: butterworth         # "butterworth" (2nd-order low-pass) | "ewa" | "none"
+    cutoff_hz: 20.0           # low-pass cutoff [Hz]; lower = smoother but more lag
+    sample_rate_hz: 1000.0    # control-loop rate (Franka torque loop = 1 kHz)
+    despike_window: 1         # median despike window (odd, >=3 to enable spike rejection; 1 = off)
+    alpha: 0.1                # EWA coefficient — used ONLY when type: ewa
+
+# Payload gravity compensation (full-minus-zero MJCF method).
+# model_full includes the flange calibration written by
+# scripts/calibrate_payload_gravity_panda_flange.py (flange_payload.xml).
+payload_gravity:
+  enabled: True
+  model_full: franka_emika_panda/panda_impedance_tool.xml          # robot + ft_sensor + calibrated tool payload
+  model_zero: franka_emika_panda/panda_impedance_tool_zero_g.xml   # same model, NO payload fragment
+  torque_clip: 15.0                                                # [Nm] per-joint safety clip
+
+# Safety
+safety:
+  max_torque: [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]   # [Nm] Panda limits
+  max_torque_rate: 1.0                                         # [Nm] per 1 ms tick
+
+# ControllerCore (Cartesian impedance for the approach / force-hold / slide)
+controller:
+  max_torque_rate: 2.0
+  null_stiffness: 0.1
+  null_q_d: [0.0, -0.3, 0.0, -1.8, 0.0, 1.5, 0.0]
+  K: [1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0]
+  D: [90.0, 90.0,  90.0,  3.0,  3.0,  3.0]
+  force_pi_kp: 0.002
+  force_pi_ki: 0.0002
+  force_pi_max: 3.0
+  target_stale_ms: 10.0
+  ft_stale_ms: 15.0
+
+# StateMachine
+state_machine:
+  # --- Milestone 2: post-tare Cartesian approach + z-force hold ---
+  approach_enabled: true        # false → stop at HOLD after the tare (Milestone-1 behavior)
+  approach_speed: 0.005         # [m/s] constant world -Z descent speed
+  contact_fz_threshold: 7   #+Fz (compression) level that counts as contact
+  contact_confirm_samples: 5    # consecutive ticks above threshold before switching to force hold
+  F_normal_desired: 4         # [N] target normal force held during FORCE_HOLD
+  force_kp: 0.005              # [m/s per N] admittance: z_dot = kp*e + kd*de/dt
+  force_kd: 0.0005                 # [m per N] admittance derivative gain
+  max_force_hold_speed: 0.01    # [m/s] clamp on z_ref velocity during force hold
+  max_depth: 0.05               # [m] z_ref may not go below z_contact - max_depth
+  retract_allowance: 0.01       # [m] z_ref may not rise above z_contact + retract_allowance
+
+  # --- Future: contact/lift phases (unused) ---
+  settle_duration: 1.0
+  lift_height: 0.05
+  lift_speed: 0.005
+  target_z_contact: 0.02
+
+# Milestone 3: z-force hold parameters (static, at the contact point)
+   # [m] z_ref ceiling = z_contact + retract_allowance
+
+# Milestone 3: user-triggered slide (z force-hold + xy slide trajectory)
+slide:
+  enabled: true                 # false → stay in FORCE_HOLD (no slide offered)
+  force:                        # z-force gains DURING the slide (separate from force_hold)
+    desired_fz: 4
+    kp_f: 0.15
+    kd_f: 0.003
+    max_z_speed: 0.005
+    max_depth: 0.1
+    retract_allowance: 0.003
+  motion:
+    direction_xy: [0, 1]    # world-frame xy slide direction (auto-normalized)
+    speed: 0.02          # [m/s] constant slide speed after the ramp
+    ramp_time: 1.0              # [s] min-jerk ramp up to speed
+    distance: 0.2             # [m] slide this far, then hold (safety cap)
+  tangential:
+    ki_vel_s: 20.0              # integral gain on tangential velocity error
+    vel_int_limit_s: 0.003      # [m/s] clamp on the velocity-correction integral
+    dx_int_gain_s: 1.0          # scale of the integral added to commanded slide velocity
+
+# Logging
+logging:
+  enabled: true
+  output_dir: data/logs
+  prefix: real_flange
+  capacity: 1500000            # max rows preallocated (~25 min at 1 kHz); logging stops when full
+  print_stats_hz: 1.0
