@@ -112,6 +112,23 @@ slide:
     vel_int_limit_s: 0.003      # [m/s] clamp on the velocity-correction integral
     dx_int_gain_s: 1.0          # scale of the integral added to commanded slide velocity
 
+# Flange F_ext drift test (scripts/test_flange_ft_drift.py).
+# Moves between IK waypoints (same target_pos/euler semantics as ik.*) with the
+# same joint PD + payload comp, FREE AIR ONLY, logging raw & processed F_ext
+# per phase. Waypoints below retrace the approach path; the surface in the
+# July-6 logs is at tip z ≈ -0.145, so z = -0.10 keeps ~4-5 cm clearance —
+# ADJUST to your scene before running.
+ft_pose_test:
+  waypoints:
+    - {pos: [0.45, -0.2, 0.20], euler: [15.0, 0.0, 0.0]}
+    - {pos: [0.6, 0, 0.05], euler: [15.0, 0.0, 0.0]}
+    - {pos: [0.45, -0.2, -0.10], euler: [15.0, 0.0, 0.0]}
+  move_time: 6.0                # [s] min-jerk duration between waypoints
+  hold_time: 2.0                # [s] static hold at each waypoint
+  cycles: 5                     # ping-pong passes through the waypoint list
+  output_dir: data/logs
+  prefix: ft_drift_test
+
 # Logging
 logging:
   enabled: true
